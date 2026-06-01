@@ -1,4 +1,4 @@
-import socket
+import ipaddress
 
 _RESERVED_IPS: frozenset[str] = frozenset({
     "0.0.0.0",          # unspecified
@@ -13,10 +13,10 @@ def validate_ip(ip: str) -> bool:
         return False
 
     try:
-        socket.inet_aton(ip)
+        ipaddress.IPv4Address(ip)
         return True
 
-    except OSError:
+    except ValueError:
         return False
 
 

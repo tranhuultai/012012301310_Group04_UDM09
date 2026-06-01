@@ -118,6 +118,22 @@ def test_validate_accepts_valid_handshake_ack() -> None:
     print("[OK] test_validate_accepts_valid_handshake_ack")
 
 
+def test_validate_accepts_valid_session_key() -> None:
+    protocol = _make_protocol()
+    packet = {
+        "type": PacketType.SESSION_KEY,
+        "payload": "00ff",
+    }
+    assert protocol.validate_packet(packet)
+    print("[OK] test_validate_accepts_valid_session_key")
+
+
+def test_validate_rejects_bad_session_key_payload() -> None:
+    protocol = _make_protocol()
+    assert not protocol.validate_packet({"type": PacketType.SESSION_KEY})
+    assert not protocol.validate_packet({"type": PacketType.SESSION_KEY, "payload": b"bad"})
+    print("[OK] test_validate_rejects_bad_session_key_payload")
+
 def test_oversized_packet_dropped() -> None:
     """receive_packet returns None for declared size > MAX_PACKET_SIZE."""
     protocol = _make_protocol()
@@ -218,6 +234,40 @@ def test_send_message_returns_false_when_not_active() -> None:
     print("[OK] test_send_message_returns_false_when_not_active")
 
 
+def test_send_session_key_marks_initiator_connected() -> None:
+    """Initiator must trigger on_connected after sending a valid session key."""
+    from node.core import P2PNode
+    import socket as _socket
+
+    connected = []
+    node = P2PNode(
+        host="127.0.0.1",
+        port=19996,
+        on_connected=connected.append,
+    )
+    _peer_priv, peer_pub = RSAUtils.generate_key_pair()
+    a, b = _socket.socketpair()
+    try:
+        node.register_peer("127.0.0.1:9003", a, True)
+        with node.peers_lock:
+            node.peer_sessions["127.0.0.1:9003"]["public_key"] = (
+                RSAUtils.serialize_public_key(peer_pub)
+            )
+
+        node._send_session_key(a, "127.0.0.1:9003")
+
+        with node.peers_lock:
+            session = node.peer_sessions["127.0.0.1:9003"]
+            assert session["state"] == "active"
+            assert session["crypto"] is not None
+
+        assert connected == ["127.0.0.1:9003"]
+    finally:
+        node.remove_peer(a)
+        b.close()
+
+    print("[OK] test_send_session_key_marks_initiator_connected")
+
 def test_handshake_timeout_disconnects_pending_peer() -> None:
     """Pending peers are disconnected after HANDSHAKE_TIMEOUT seconds."""
     import socket as _socket
@@ -257,6 +307,8 @@ def test_validate_ip_rejects_reserved() -> None:
     assert not validate_ip("255.255.255.255")
     assert validate_ip("192.168.1.1")
     assert not validate_ip("not_an_ip")
+    assert not validate_ip("127.1")
+    assert not validate_ip("1")
     print("[OK] test_validate_ip_rejects_reserved")
 
 
@@ -268,6 +320,8 @@ if __name__ == "__main__":
     test_validate_accepts_valid_message()
     test_validate_accepts_valid_handshake()
     test_validate_accepts_valid_handshake_ack()
+    test_validate_accepts_valid_session_key()
+    test_validate_rejects_bad_session_key_payload()
     test_oversized_packet_dropped()
     test_receive_packet_does_not_validate()
     test_receive_packet_handles_oserror()
@@ -275,6 +329,7 @@ if __name__ == "__main__":
     test_load_public_key_rejects_garbage()
     test_register_peer_atomic()
     test_send_message_returns_false_when_not_active()
+    test_send_session_key_marks_initiator_connected()
     test_handshake_timeout_disconnects_pending_peer()
     test_validate_ip_rejects_reserved()
     print("\nAll tests passed.")

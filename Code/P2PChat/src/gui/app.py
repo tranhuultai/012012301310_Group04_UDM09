@@ -340,8 +340,11 @@ class ChatApp(ctk.CTk):
         def update() -> None:
             if peer_address in self.connected_peers:
                 self.connected_peers.remove(peer_address)
-                self.update_peer_list()
 
+            if self.selected_peer == peer_address:
+                self.selected_peer = None
+
+            self.update_peer_list()
             self.add_system_message(f"Connection lost: {peer_address}")
 
         self.after(0, update)

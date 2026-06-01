@@ -344,6 +344,11 @@ class P2PNode:
         if peer_address is None:
             return
 
+        if not self.protocol_handler.validate_packet(packet):
+            print(f"[WARNING] Invalid session_key packet from {peer_address}")
+            self.remove_peer(peer_socket)
+            return
+
         encrypted_key_hex = packet.get("payload", "")
 
         if not encrypted_key_hex:
@@ -582,12 +587,18 @@ class P2PNode:
 
         crypto = CryptoHandler(key=fernet_key)
 
+        became_active = False
+
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
 
             if session is not None:
+                became_active = session.get("state") != "active"
                 session["session_key"] = fernet_key
                 session["crypto"] = crypto
                 session["state"] = "active"
 
         print(f"[INFO] Session key sent to {peer_address}")
+
+        if became_active and self.on_connected is not None:
+            self.on_connected(peer_address)

@@ -26,6 +26,10 @@ _MESSAGE_REQUIRED: frozenset[str] = frozenset({
     "type", "sender", "payload", "timestamp", "message_id",
 })
 
+_SESSION_KEY_REQUIRED: frozenset[str] = frozenset({
+    "type", "payload",
+})
+
 _MESSAGE_STRING_FIELDS: frozenset[str] = frozenset({
     "type", "sender", "message_id", "timestamp",
 })
@@ -96,6 +100,17 @@ class ProtocolHandler:
                 if not isinstance(packet.get(field), str):
                     print(f"[WARNING] validate_packet: '{field}' must be a string")
                     return False
+
+            if not isinstance(packet.get("payload"), str):
+                print("[WARNING] validate_packet: 'payload' must be a string")
+                return False
+
+        elif packet_type == PacketType.SESSION_KEY:
+            required = _SESSION_KEY_REQUIRED
+
+            if not isinstance(packet.get("payload"), str):
+                print("[WARNING] validate_packet: 'payload' must be a string")
+                return False
                 
         else:
             # Unknown or future packet type — drop it.
