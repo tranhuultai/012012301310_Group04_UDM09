@@ -1,4 +1,4 @@
-# BÁO CÁO KIỂM THỬ HỆ THỐNG - SPRINT 2
+# BÁO CÁO KIỂM THỬ HỆ THỐNG 
 
 * **Phân công nhiệm vụ:** Testing, Stress Test, Bug Tracking, Documentation.
 * **Thư mục quản lý sản phẩm:** `DOCX/`, `Extra/`, `README.md`, `Code/P2PChat/tests/`.
@@ -73,5 +73,5 @@ Hệ thống sử dụng thư viện bảo mật `cryptography` để triển kh
 
 ---
 
-## III. KẾT LUẬN SPRINT 2
+## III. KẾT LUẬN 
 Qua đợt kiểm thử chuyên sâu (Functional & Stress Test), sản phẩm mã nguồn P2PChat của nhóm đáp ứng hoàn hảo các tiêu chí đề ra. Cơ chế mã hóa bảo mật hoạt động an toàn dưới nền, kiến trúc đa luồng phân tách tác vụ mạng tốt giúp tối ưu hóa trải nghiệm người dùng trên GUI. Hệ thống sẵn sàng đóng gói cho các đợt phát triển tính năng tiếp theo.
