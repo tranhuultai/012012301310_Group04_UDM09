@@ -185,3 +185,7 @@ customtkinter
 
 > Project hiện đang trong giai đoạn khởi tạo và thiết kế hệ thống.
 > Các chức năng sẽ được triển khai theo từng sprint.
+
+
+
+---
