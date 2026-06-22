@@ -3,17 +3,86 @@ import threading
 import time
 from gui.sidebar import Sidebar
 from gui.statusbar import StatusBar
+from gui.trust_dialog import TrustDialog
 
 # Set up standard dark mode interface
 ctk.set_appearance_mode("dark")
 
 class ChatApp(ctk.CTk):
+    def on_transfer_started(
+        self,
+        transfer_id,
+        filename,
+        peer_name,
+        direction
+    ):
+        self.transfer_panel.add_transfer(
+            transfer_id,
+            filename,
+            peer_name,
+            direction
+        )
+
+    def on_transfer_complete(
+        self,
+        transfer_id
+    ):
+        self.transfer_panel.remove_transfer(
+        transfer_id
+    )   
+    def on_peer_discovered(self, peer_info):
+        """Handling when a new peer is detected"""
+        peer_id = peer_info.get("peer_id")
+        new_fp = peer_info.get("fingerprint")
+
+        if peer_id not in self.trusted_peers:
+            # First connection
+            TrustDialog(self, mode="new_peer", peer_info=peer_info, 
+                        callback=lambda res: self._handle_trust_decision(res, peer_info))
+        elif self.trusted_peers[peer_id] != new_fp:
+            # Warning about fingerprint change
+            peer_info["known_fingerprint"] = self.trusted_peers[peer_id]
+            peer_info["current_fingerprint"] = new_fp
+            TrustDialog(self, mode="warning", peer_info=peer_info,
+                        callback=lambda res: self._handle_trust_decision(res, peer_info))
+
+    def _handle_trust_decision(self, action, peer_info):
+        if action in ["trust", "update"]:
+            self.trusted_peers[peer_info["peer_id"]] = peer_info["fingerprint"]
+            self.sidebar.update_peers([peer_info["username"]])
+
+    def on_message_received(self, peer_id, username, message):
+        """Save chat history and display message"""
+        timestamp = time.strftime("%H:%M")
+        formatted_msg = f"[{timestamp}] {username}: {message}"
+        
+        if peer_id not in self.chat_history:
+            self.chat_history[peer_id] = []
+        self.chat_history[peer_id].append(formatted_msg)
+        
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", formatted_msg + "\n")
+        self.chat_box.configure(state="disabled")
+        self.chat_box.see("end")
+
+    def on_transfer_progress(self, transfer_id, progress):
+        """Update progress bar in real-time"""
+        self.transfer_panel.update_transfer(transfer_id, progress)
+
+    def on_file_offer(self, peer_name, filename, transfer_id):
+        """Display a notification that the file has been received"""
+        self.chat_box.configure(state="normal")
+        self.chat_box.insert("end", f"\n--- 📂 {peer_name} muốn gửi: {filename} ---\n")
+        self.chat_box.configure(state="disabled")
+
     def __init__(self, listen_port=12000):
         super().__init__()
         self.title(f"💬 P2P Chat v2.0 (Port: {listen_port})")
         self.geometry("900x650")
         self.minsize(700, 500)
         self.listen_port = listen_port
+        self.trusted_peers = {}
+        self.chat_history = {}
 
         # --- Set up Responsive Grid ---
         # Column 0 (Chat) will expand (weight=1), Column 1 (Sidebar) stays fixed (weight=0)
@@ -66,8 +135,20 @@ class ChatApp(ctk.CTk):
         self.send_btn.pack(side="left")
 
         # ================= LEFT AREA (SIDEBAR) =================
+        from gui.transfer_panel import TransferPanel
         self.sidebar = Sidebar(self)
         self.sidebar.grid(row=0, column=1, sticky="ns")
+        self.transfer_panel = TransferPanel(
+            master=self.sidebar,
+            controller=self
+        )
+
+        self.transfer_panel.pack(
+            fill="both",
+            expand=True,
+            padx=5,
+            pady=5
+    )
 
         # ================= BOTTOM AREA (STATUS BAR) =================
         self.status_bar = StatusBar(self)
@@ -107,7 +188,13 @@ class ChatApp(ctk.CTk):
 
         # Simulate loading a list of peers to display in the sidebar.
         self.sidebar.update_peers(["James", "Alice"])
+    
+    def send_file(self, file_path):
+        """This function is called when you click the 'Send File' button on the UI"""
+        print(f"Sending file: {file_path}")
 
-if __name__ == "__main__":
-    app = ChatApp()
-    app.mainloop()
+    def cancel_transfer(self, transfer_id):
+        """This function is called when you click the 'Cancel' button on the UI"""
+        print(f"Cancelling transfer: {transfer_id}")
+        self.on_transfer_complete(transfer_id)
+
