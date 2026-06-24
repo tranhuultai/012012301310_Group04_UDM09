@@ -121,3 +121,85 @@ class MessageHistory:
         )
 
         return len(history)
+    def get_history(
+        self,
+        peer_id: str,
+        limit: int = 100
+   ):
+      """Return recent messages."""
+
+      history = self.load_history(
+        peer_id
+    )
+
+      return history[-limit:]
+    def get_recent(
+       self,
+       limit: int = 50
+    ):
+       """Recent messages across all peers."""
+
+       records = []
+
+       for file_path in self.base_dir.glob(
+                "*.json"
+            ):
+
+        peer_id = file_path.stem
+
+        history = self.load_history(
+            peer_id
+        )
+
+        records.extend(
+            history
+        )
+
+        records.sort(
+        key=lambda x:
+        x.get(
+            "timestamp",
+            0
+        )
+    )
+
+       return records[-limit:]
+    def export(
+       self,
+       peer_id: str,
+       filepath: Path
+   ):
+       """Export history to txt file."""
+
+       history = self.load_history(
+        peer_id
+       )
+
+       with open(
+        filepath,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        for record in history:
+
+            timestamp = record.get(
+                "timestamp",
+                ""
+            )
+
+            direction = record.get(
+                "direction",
+                ""
+            )
+
+            content = record.get(
+                "content",
+                ""
+            )
+
+            f.write(
+                f"[{timestamp}] "
+                f"{direction}: "
+                f"{content}\n"
+            )
