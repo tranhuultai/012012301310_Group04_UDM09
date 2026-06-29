@@ -130,11 +130,12 @@ class TestTransferMeta:
         assert meta2.timestamp   == meta.timestamp
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict must include every __slots__ field."""
+        """to_dict must include every dataclass field."""
+        import dataclasses  # pylint: disable=import-outside-toplevel
         meta = self._make_meta()
         d    = meta.to_dict()
-        for slot in TransferMeta.__slots__:
-            assert slot in d, f"Missing field: {slot}"
+        for f in dataclasses.fields(meta):
+            assert f.name in d, f"Missing field: {f.name}"
 
     def test_from_dict_filesize_coercion(self) -> None:
         """from_dict coerces filesize to int even when stored as string."""

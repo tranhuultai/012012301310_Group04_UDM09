@@ -265,7 +265,11 @@ class ProtocolHandler:
             if not packet_data:
                 return None
 
-            return json.loads(packet_data.decode("utf-8"))
+            result = json.loads(packet_data.decode("utf-8"))
+            if not isinstance(result, dict):
+                logger.warning("receive_packet: expected JSON object, got %s", type(result).__name__)
+                return None
+            return result
 
         except OSError as exc:
             # WinError 10054 (connection reset) and 10053 (connection aborted)

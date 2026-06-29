@@ -469,6 +469,8 @@ class ChatController:
             peer_id = self._tcp_to_peer.pop(tcp_addr, None)
             if peer_id:
                 self._peer_to_tcp.pop(peer_id, None)
+        if self.transfer_manager:
+            self.transfer_manager.cleanup_peer(tcp_addr)
         self._safe_fire(self.on_disconnect, tcp_addr)
         self._safe_fire(self.on_peers_update)
 

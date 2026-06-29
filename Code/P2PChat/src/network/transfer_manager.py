@@ -31,6 +31,7 @@ import logging
 import threading
 import time
 import uuid
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -49,40 +50,21 @@ _ST_CANCELLED = "cancelled"
 _ST_ERROR     = "error"
 
 
+@dataclass
 class TransferMeta:
-    """Immutable record describing a file transfer (DTO — frozen after creation).
-
-    Attributes:
-        transfer_id: UUID4 string identifying this transfer.
-        filename: Base filename (no path) of the file.
-        filesize: Total size in bytes.
-        mime_type: MIME type string (e.g. "application/pdf").
-        sha256: Hex digest of the complete file contents.
-        sender_id: SHA-256 peer_id of the sender.
-        receiver_id: SHA-256 peer_id of the receiver.
-        timestamp: Unix timestamp when the transfer was created.
-    """
-
-    __slots__ = (
-        "transfer_id", "filename", "filesize", "mime_type",
-        "sha256", "sender_id", "receiver_id", "timestamp",
-    )
-
-    def __init__(self, transfer_id: str, filename: str, filesize: int,
-                 mime_type: str, sha256: str, sender_id: str,
-                 receiver_id: str, timestamp: float) -> None:
-        self.transfer_id = transfer_id
-        self.filename    = filename
-        self.filesize    = filesize
-        self.mime_type   = mime_type
-        self.sha256      = sha256
-        self.sender_id   = sender_id
-        self.receiver_id = receiver_id
-        self.timestamp   = timestamp
+    """Metadata for a file transfer — created once, not modified after."""
+    transfer_id: str
+    filename:    str
+    filesize:    int
+    mime_type:   str
+    sha256:      str
+    sender_id:   str
+    receiver_id: str
+    timestamp:   float
 
     def to_dict(self) -> dict:
         """Serialise to a plain dict for JSON transport."""
-        return {slot: getattr(self, slot) for slot in self.__slots__}
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "TransferMeta":
@@ -635,6 +617,20 @@ class TransferManager:
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
 
+    def cleanup_peer(self, tcp_addr: str) -> None:
+        """Close any open file handles for transfers involving *tcp_addr*.
+
+        Called when a peer disconnects abruptly (no FILE_CANCEL received).
+        """
+        with self._lock:
+            tids = [
+                tid for tid, e in self._transfers.items()
+                if e.get("tcp_addr") == tcp_addr and e.get("state") == _ST_RECEIVING
+            ]
+        for tid in tids:
+            self._cleanup_recv(tid)
+            self._finish(tid, False, "Peer disconnected during transfer.")
+
     def _get_crypto(self, tcp_addr: str) -> Optional[CryptoHandler]:
         """Return the Fernet CryptoHandler for *tcp_addr*, or None."""
         with self._node.peers_lock:
@@ -696,7 +692,7 @@ class TransferManager:
         base     = Path(FILE_DOWNLOAD_DIR)
         stem     = Path(filename).stem
         suffix   = Path(filename).suffix
-        candidate = base / filename
+        candidate = base / Path(filename).name  # strip any directory components from sender
         counter  = 0
         while candidate.exists():
             counter  += 1

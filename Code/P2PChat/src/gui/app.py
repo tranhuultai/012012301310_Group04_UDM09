@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import uuid
+from pathlib import Path
 import customtkinter as ctk
 
 from config import (
@@ -344,7 +345,6 @@ class ChatApp(ctk.CTk):
 
     def _handle_file_sent(self, filepath: str, peer_id: str) -> None:
         """Called by TransferPanel after FILE_META is sent — show bubble in sender's chat."""
-        from pathlib import Path  # pylint: disable=import-outside-toplevel
         path = Path(filepath)
         size = path.stat().st_size if path.exists() else 0
         if size < 1024:
@@ -409,7 +409,7 @@ class ChatApp(ctk.CTk):
             info: Discovery info dict (contains current fingerprint).
         """
         rec = self.controller.node.tofu.store.get_peer(peer_id) if self.controller.node else None
-        known_fp   = rec["fingerprint"] if rec else "—"
+        known_fp   = rec.get("fingerprint", "—") if rec else "—"
         current_fp = info.get("fingerprint", "—")
         username   = info.get("username", peer_id[:8])
 
