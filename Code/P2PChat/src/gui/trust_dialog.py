@@ -12,16 +12,16 @@ class TrustDialog(ctk.CTkToplevel):
 
     Modes
     -----
-    ``new_peer``
+    new_peer
         Shown on first contact.  Offers Trust, Block, Skip.
-    ``warning``
+    warning
         Shown when a known peer's fingerprint changed (possible MITM).
         Offers Update & Trust, Block.
 
-    Callback results: ``"trust"`` | ``"block"`` | ``"skip"`` | ``"update"``
+    Callback results: "trust" | "block" | "skip" | "update"
 
-    Design note: ``grab_set()`` is called *after* all widgets are built.
-    Calling it earlier (in ``_setup_window``) causes the window to capture
+    Design note: grab_set() is called *after* all widgets are built.
+    Calling it earlier (in _setup_window) causes the window to capture
     events before it is visible, making buttons unresponsive.
     """
 
@@ -36,10 +36,10 @@ class TrustDialog(ctk.CTkToplevel):
 
         Args:
             master: Parent Tk widget (root window or top-level).
-            mode: ``"new_peer"`` or ``"warning"``.
-            peer_info: Dict with peer identity fields.  For ``"warning"`` mode
-                must also contain ``known_fingerprint`` and
-                ``current_fingerprint``.
+            mode: "new_peer" or "warning".
+            peer_info: Dict with peer identity fields.  For "warning" mode
+                must also contain known_fingerprint and
+                current_fingerprint.
             callback: Called with the result string when the user acts.
         """
         super().__init__(master)
@@ -178,7 +178,7 @@ class TrustDialog(ctk.CTkToplevel):
         """Render a row of action buttons.
 
         Args:
-            buttons: Each item is ``(label, result, text_color, fg_color)``.
+            buttons: Each item is (label, result, text_color, fg_color).
         """
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(pady=16)
@@ -210,7 +210,7 @@ class TrustDialog(ctk.CTkToplevel):
         """Call the callback with *result* and close the dialog.
 
         Args:
-            result: One of ``"trust"``, ``"block"``, ``"skip"``, ``"update"``.
+            result: One of "trust", "block", "skip", "update".
         """
         try:
             self.grab_release()

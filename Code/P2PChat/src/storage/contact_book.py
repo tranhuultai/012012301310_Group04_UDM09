@@ -8,7 +8,7 @@ from storage.storage_manager import StorageManager
 class ContactBook:
     """Persistent contacts keyed by peer_id.
 
-    File layout (``data/storage/contacts.json``)::
+    File layout (data/storage/contacts.json)::
 
         {
             "<peer_id>": {

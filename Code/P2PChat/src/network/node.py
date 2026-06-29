@@ -30,9 +30,9 @@ class P2PNode:
 
     Keying convention
     -----------------
-    * ``peers`` / ``peer_sessions``: keyed by ``"IP:PORT"`` (the actual TCP address).
-    * ``discovered_peers``: keyed by ``peer_id`` (SHA-256 of public key).
-    * A ``tcp_address`` field in each discovery entry bridges the two key spaces.
+    * peers / peer_sessions: keyed by "IP:PORT" (the actual TCP address).
+    * discovered_peers: keyed by peer_id (SHA-256 of public key).
+    * A tcp_address field in each discovery entry bridges the two key spaces.
       It is updated to the **live** (possibly ephemeral) address the moment a
       session becomes active, so downstream lookups always match.
 
@@ -63,13 +63,13 @@ class P2PNode:
         """Initialise the node (does not bind or start threads yet).
 
         Args:
-            host: Bind address (``"0.0.0.0"`` for all interfaces).
+            host: Bind address ("0.0.0.0" for all interfaces).
             port: TCP listen port.
             username: Display name broadcast during discovery.
-            on_message: ``(peer_id, sender, payload)`` callback for inbound messages.
-            on_disconnect: ``(tcp_addr)`` callback when a peer disconnects.
-            on_connected: ``(peer_id, tcp_addr)`` callback when session is active.
-            on_peer_discovered: ``(peer_id, info)`` callback on discovery events.
+            on_message: (peer_id, sender, payload) callback for inbound messages.
+            on_disconnect: (tcp_addr) callback when a peer disconnects.
+            on_connected: (peer_id, tcp_addr) callback when session is active.
+            on_peer_discovered: (peer_id, info) callback on discovery events.
         """
         self.host     = host
         self.port     = port
@@ -258,7 +258,7 @@ class P2PNode:
 
         Args:
             message: Plaintext body.
-            tcp_addr: ``"IP:PORT"`` session key.
+            tcp_addr: "IP:PORT" session key.
 
         Returns:
             True if sent successfully.
@@ -290,7 +290,7 @@ class P2PNode:
             message: Plaintext body.
 
         Returns:
-            ``(sent_count, failed_count)`` tuple.
+            (sent_count, failed_count) tuple.
         """
         with self.peers_lock:
             active = [a for a, s in self.peer_sessions.items() if s["state"] == "active"]
@@ -347,7 +347,7 @@ class P2PNode:
             ip: Remote peer IP.
 
         Returns:
-            ``"IP:port"`` key of an active session, or None.
+            "IP:port" key of an active session, or None.
         """
         with self.peers_lock:
             for tcp_addr, sess in self.peer_sessions.items():
@@ -795,7 +795,7 @@ class P2PNode:
         """Register a new TCP connection.
 
         Args:
-            tcp_addr: ``"IP:PORT"`` key.
+            tcp_addr: "IP:PORT" key.
             sock: Connected socket.
             is_initiator: True if we dialled out.
 
@@ -973,18 +973,18 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def _get_tcp_addr(self, peer_socket: socket.socket) -> str | None:
-        """Return the ``"IP:PORT"`` key for *peer_socket*, or None."""
+        """Return the "IP:PORT" key for *peer_socket*, or None."""
         with self.peers_lock:
             return self._sock_to_addr.get(id(peer_socket))
 
     def _get_peer_id(self, peer_socket: socket.socket) -> str | None:
-        """Compat alias for ``_get_tcp_addr`` (used by tests).
+        """Compat alias for _get_tcp_addr (used by tests).
 
         Args:
             peer_socket: Connected socket object.
 
         Returns:
-            ``"IP:PORT"`` key or None.
+            "IP:PORT" key or None.
         """
         return self._get_tcp_addr(peer_socket)
 
@@ -1023,11 +1023,11 @@ class P2PNode:
         """Send a pre-built packet dict to the peer at *tcp_addr*.
 
         Used by TransferManager to send file-transfer packets without going
-        through ``create_packet`` (which assumes a chat-message envelope).
+        through create_packet (which assumes a chat-message envelope).
 
         Args:
-            packet: Ready-to-send dict (must include ``"type"`` key).
-            tcp_addr: ``"IP:PORT"`` session key.
+            packet: Ready-to-send dict (must include "type" key).
+            tcp_addr: "IP:PORT" session key.
 
         Returns:
             True if the packet was written to the socket successfully.

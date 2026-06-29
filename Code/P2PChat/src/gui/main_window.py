@@ -304,7 +304,7 @@ class MainWindow(ctk.CTkFrame):
             tid: Unique transfer ID.
             filename: Name of the file being transferred.
             peer: Display name of the remote peer.
-            direction: ``"out"`` or ``"in"``.
+            direction: "out" or "in".
         """
         self.transfer_panel.add_transfer(tid, filename, peer, direction)
 
@@ -313,7 +313,7 @@ class MainWindow(ctk.CTkFrame):
 
         Args:
             tid: Unique transfer ID.
-            progress: Value in ``[0, 1]``.
+            progress: Value in [0, 1].
         """
         self.transfer_panel.update_transfer(tid, progress)
 
@@ -347,7 +347,7 @@ class MainWindow(ctk.CTkFrame):
         """Display the TOFU security verification dialog.
 
         Args:
-            mode: ``"new_peer"`` or ``"warning"``.
+            mode: "new_peer" or "warning".
             peer_info: PeerInfo dict passed to the dialog.
             callback: Called with the user's decision string.
         """

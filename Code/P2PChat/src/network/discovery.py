@@ -31,11 +31,11 @@ class DiscoveryService:
     * The broadcast socket is created once and reused for all broadcasts
       (prevents the file-descriptor leak that occurred when a new socket was
       created per call and an OSError in the finally block silently ate it).
-    * ``_send_response`` replies to ``(ip, DISCOVERY_PORT)`` — not to the
+    * _send_response replies to (ip, DISCOVERY_PORT) — not to the
       sender's ephemeral UDP port — so the listener on the other side actually
       receives the response.
 
-    Lifecycle: ``start()`` → (periodic ``discover()``) → ``stop()``
+    Lifecycle: start() → (periodic discover()) → stop()
     """
 
     # How long (seconds) the cached JWT is considered fresh.
@@ -233,11 +233,11 @@ class DiscoveryService:
     def _send_response(self, peer_ip_or_addr) -> None:
         """Reply to a broadcast with our own identity info.
 
-        Sends to ``(peer_ip, DISCOVERY_PORT)`` — the port the peer's listener
+        Sends to (peer_ip, DISCOVERY_PORT) — the port the peer's listener
         is bound to, NOT the ephemeral UDP source port.
 
         Args:
-            peer_ip_or_addr: Either an IP string or a ``(ip, port)`` tuple
+            peer_ip_or_addr: Either an IP string or a (ip, port) tuple
                 (the tuple form is the old API kept for test compatibility).
         """
         sock = self._bcast_sock
@@ -312,11 +312,11 @@ class DiscoveryService:
         """Update the local nearby-peer registry from *packet*.
 
         This local copy is primarily used by unit tests.  The authoritative
-        registry is maintained by ``P2PNode.discovered_peers``.
+        registry is maintained by P2PNode.discovered_peers.
 
         Args:
             packet: Discovery packet dict.
-            address: ``(ip, port)`` of the packet sender.
+            address: (ip, port) of the packet sender.
         """
         peer_id = packet.get("peer_id")
         if not peer_id:
@@ -355,7 +355,7 @@ class DiscoveryService:
 
     @property
     def _socket(self) -> "socket.socket | None":
-        """Compat: tests inject a mock socket via ``discovery._socket``."""
+        """Compat: tests inject a mock socket via discovery._socket."""
         return self._bcast_sock
 
     @_socket.setter

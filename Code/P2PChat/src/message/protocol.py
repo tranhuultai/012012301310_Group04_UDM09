@@ -119,7 +119,7 @@ class ProtocolHandler:
             packet: Dict to serialise as JSON.
 
         Returns:
-            Bytes in the format ``[4-byte big-endian length][JSON body]``.
+            Bytes in the format [4-byte big-endian length][JSON body].
         """
         json_data = json.dumps(packet).encode("utf-8")
         return struct.pack("!I", len(json_data)) + json_data
@@ -185,7 +185,7 @@ class ProtocolHandler:
         """Decrypt packet payload.
 
         Args:
-            packet: Packet dict containing a ``payload`` key.
+            packet: Packet dict containing a payload key.
             crypto: Active CryptoHandler, or None for plain payloads.
 
         Returns:
@@ -228,7 +228,7 @@ class ProtocolHandler:
             size: Number of bytes to read.
 
         Returns:
-            Bytes read, or ``b""`` when the connection is closed.
+            Bytes read, or b"" when the connection is closed.
         """
         received_data = bytearray()
         while len(received_data) < size:

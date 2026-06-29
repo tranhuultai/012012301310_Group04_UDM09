@@ -15,7 +15,7 @@ _SCHEMA = {"fingerprint": str, "trust_state": str}
 class TrustStore:
     """Thread-safe JSON-backed store for peer trust records.
 
-    File layout (``data/trust/known_peers.json``)::
+    File layout (data/trust/known_peers.json)::
 
         {
             "<peer_id>": {

@@ -56,7 +56,7 @@ class TransferMeta:
         transfer_id: UUID4 string identifying this transfer.
         filename: Base filename (no path) of the file.
         filesize: Total size in bytes.
-        mime_type: MIME type string (e.g. ``"application/pdf"``).
+        mime_type: MIME type string (e.g. "application/pdf").
         sha256: Hex digest of the complete file contents.
         sender_id: SHA-256 peer_id of the sender.
         receiver_id: SHA-256 peer_id of the receiver.
@@ -129,16 +129,16 @@ class TransferManager:
     * Validate files before sending (size, extension).
     * Build and dispatch FILE_META / FILE_START / FILE_CHUNK / FILE_COMPLETE.
     * Receive and dispatch DOWNLOAD_REQUEST / FILE_CHUNK / FILE_COMPLETE.
-    * Write received chunks to ``.part`` files; rename on integrity check.
+    * Write received chunks to .part files; rename on integrity check.
     * Report progress to the GUI through lightweight callbacks.
     * Never block the GUI thread or the network receive thread.
 
     Thread model
     ------------
-    Each outbound transfer runs in its own daemon thread (``_SendThread``).
-    The inbound chunk-write loop also runs in a daemon thread (``_RecvThread``).
-    Both threads communicate with the GUI exclusively through the ``after()``
-    mechanism supplied by the ChatApp (via ``schedule_gui``).
+    Each outbound transfer runs in its own daemon thread (_SendThread).
+    The inbound chunk-write loop also runs in a daemon thread (_RecvThread).
+    Both threads communicate with the GUI exclusively through the after()
+    mechanism supplied by the ChatApp (via schedule_gui).
     """
 
     def __init__(
@@ -157,12 +157,12 @@ class TransferManager:
         Args:
             node: The running P2PNode instance.
             controller: ChatController (for tcp address lookup).
-            schedule_gui: A ``fn → None`` that schedules *fn* on the Tk thread.
-            on_transfer_started: ``(tid, filename, peer_name, direction)``
-            on_transfer_progress: ``(tid, fraction)`` — fraction in [0, 1].
-            on_transfer_complete: ``(tid, success, message)``
-            on_transfer_error: ``(tid, message)``
-            on_file_meta: ``(meta: TransferMeta, peer_name: str)`` — called when
+            schedule_gui: A fn → None that schedules *fn* on the Tk thread.
+            on_transfer_started: (tid, filename, peer_name, direction)
+            on_transfer_progress: (tid, fraction) — fraction in [0, 1].
+            on_transfer_complete: (tid, success, message)
+            on_transfer_error: (tid, message)
+            on_file_meta: (meta: TransferMeta, peer_name: str) — called when
                 the receiver gets a FILE_META and should show a Download button.
         """
         self._node         = node
@@ -197,7 +197,7 @@ class TransferManager:
             peer_id: SHA-256 identifier of the destination peer.
 
         Returns:
-            ``(True, transfer_id)`` if meta was sent, ``(False, error_msg)``
+            (True, transfer_id) if meta was sent, (False, error_msg)
             if validation failed or peer is not connected.
         """
         path = Path(filepath)
@@ -685,14 +685,14 @@ class TransferManager:
     def _safe_save_path(self, filename: str) -> Path:
         """Return a non-colliding save path under FILE_DOWNLOAD_DIR.
 
-        If ``downloads/report.pdf`` already exists, tries
-        ``downloads/report_1.pdf``, ``downloads/report_2.pdf``, …
+        If downloads/report.pdf already exists, tries
+        downloads/report_1.pdf, downloads/report_2.pdf, …
 
         Args:
             filename: Base filename from the transfer metadata.
 
         Returns:
-            A ``Path`` object guaranteed not to exist at call time.
+            A Path object guaranteed not to exist at call time.
         """
         base     = Path(FILE_DOWNLOAD_DIR)
         stem     = Path(filename).stem

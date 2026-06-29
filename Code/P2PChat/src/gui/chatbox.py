@@ -1,13 +1,13 @@
 """ChatBox: scrollable message area with responsive bubbles.
 
 Responsive design:
-    ChatBox binds ``<Configure>`` on its scrollable frame and updates
-    ``wraplength`` on all existing bubble labels when the chat column
+    ChatBox binds <Configure> on its scrollable frame and updates
+    wraplength on all existing bubble labels when the chat column
     resizes.  This fixes the "broken layout on window resize" bug that
-    occurs when ``wraplength`` is a hard-coded constant.
+    occurs when wraplength is a hard-coded constant.
 
-    ``_bubble_labels`` holds weak references to message labels.  When
-    ``clear()`` is called, the list is reset so garbage-collected widgets
+    _bubble_labels holds weak references to message labels.  When
+    clear() is called, the list is reset so garbage-collected widgets
     don't accumulate.
 """
 from __future__ import annotations
@@ -186,7 +186,9 @@ class ChatBox(ctk.CTkFrame):
                 # pylint: disable=protected-access
                 canvas = self._scroll._parent_canvas
                 canvas.update_idletasks()
+                # Force scrollregion to include newly added content before scrolling.
+                canvas.configure(scrollregion=canvas.bbox("all"))
                 canvas.yview_moveto(1.0)
             except Exception:   # pylint: disable=broad-exception-caught
                 pass
-        self.after(80, _do)
+        self.after(100, _do)

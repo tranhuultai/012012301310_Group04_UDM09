@@ -36,9 +36,9 @@ class CryptoHandler:
 
         Args:
             encrypted_data: Base64-encoded Fernet ciphertext.
-            ttl: Maximum token age in seconds.  Defaults to ``None`` (no age
+            ttl: Maximum token age in seconds.  Defaults to None (no age
                  check).  For direct P2P sessions, replay protection is already
-                 provided by the node-level ``seen_messages`` deque; Fernet TTL
+                 provided by the node-level seen_messages deque; Fernet TTL
                  would cause false rejections if clocks are skewed between peers.
 
         Returns:

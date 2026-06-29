@@ -12,10 +12,10 @@ class UIState:
     Rationale
     ---------
     Network callbacks arrive on background threads.  The ChatApp schedules
-    state updates here via ``after(0, ...)``, then reads from this object
+    state updates here via after(0, ...), then reads from this object
     when rebuilding the sidebar or resolving peer info for the chat header.
 
-    Keeping a single ``discovered_peers`` dict here avoids passing raw dicts
+    Keeping a single discovered_peers dict here avoids passing raw dicts
     through multiple callback hops and gives one authoritative read path for
     all GUI components.
 
@@ -66,6 +66,6 @@ class UIState:
         """Update the overall connection status string.
 
         Args:
-            status: One of ``"offline"``, ``"connected"``, etc.
+            status: One of "offline", "connected", etc.
         """
         self.connection_status = status

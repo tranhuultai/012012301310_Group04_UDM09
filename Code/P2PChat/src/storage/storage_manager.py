@@ -51,7 +51,7 @@ class StorageManager:
     def save_json(file_path: Path, data) -> None:
         """Atomically write *data* as JSON to *file_path*.
 
-        Writes to a sibling ``.tmp`` file first, then renames it into place.
+        Writes to a sibling .tmp file first, then renames it into place.
         This guarantees the target file is never left in a partial state.
 
         Args:
