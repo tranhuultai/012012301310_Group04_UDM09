@@ -13,8 +13,6 @@ Responsive design:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
-
 import customtkinter as ctk
 
 from gui import theme as T
@@ -106,6 +104,42 @@ class ChatBox(ctk.CTkFrame):
         ctk.CTkLabel(pill, text=text,
                      text_color=T.TEXT_MUTED, font=(T.FONT, 9),
                      ).pack(padx=12, pady=4)
+        self._scroll_bottom()
+
+    def add_file_sent(self, sender: str, filename: str, size_str: str) -> None:
+        """Append a right-aligned sent-file card (no download button).
+
+        Args:
+            sender: Local display name (usually "Me").
+            filename: File name sent.
+            size_str: Pre-formatted size string.
+        """
+        self._maybe_date_divider()
+
+        row = ctk.CTkFrame(self._scroll, fg_color="transparent")
+        row.pack(fill="x", pady=(2, 6), padx=16)
+
+        card = ctk.CTkFrame(row, fg_color=T.BG_BUBBLE_ME, corner_radius=14)
+        card.pack(anchor="e", padx=(72, 0))
+
+        ctk.CTkLabel(card, text=sender,
+                     font=(T.FONT, 10, "bold"), text_color="#a5b4fc",
+                     anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+
+        info_row = ctk.CTkFrame(card, fg_color="transparent")
+        info_row.pack(fill="x", padx=12, pady=(0, 10))
+        ctk.CTkLabel(info_row, text="📄",
+                     font=("Segoe UI Emoji", 22)).pack(side="left", padx=(0, 8))
+
+        detail = ctk.CTkFrame(info_row, fg_color="transparent")
+        detail.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(detail, text=filename,
+                     font=(T.FONT, 12, "bold"), text_color="#e2e8f0",
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(detail, text=f"{size_str}  ·  Sent",
+                     font=(T.FONT, 10), text_color="#a5b4fc",
+                     anchor="w").pack(anchor="w")
+
         self._scroll_bottom()
 
     def add_file_message(self, sender: str, filename: str,

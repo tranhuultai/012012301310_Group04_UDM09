@@ -45,7 +45,7 @@ class StatusBar(ctk.CTkFrame):
         """Set the primary status segment (also used by tests)."""
         self._status_label.configure(text=text, text_color=color)
 
-    def set_identity(self, peer_id: str, fingerprint: str) -> None:
+    def set_identity(self, peer_id: str, _fingerprint: str) -> None:
         """Show local identity hash in segment 1."""
         # Shorten for status bar — full values visible in peer details
         self._status_label.configure(

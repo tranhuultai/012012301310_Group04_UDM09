@@ -45,7 +45,7 @@ class PeerCard(ctk.CTkFrame):
     def __init__(self, master, peer_id: str, peer_info: dict,
                  on_select=None, on_connect=None, **kw) -> None:
         super().__init__(master, corner_radius=12,
-                         fg_color=T.BG_CARD, height=76, **kw)
+                         fg_color=T.BG_CARD, height=84, **kw)
         self.peer_id     = peer_id
         self.peer_info   = peer_info
         self._on_select  = on_select
@@ -59,17 +59,17 @@ class PeerCard(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        """Build card with grid + fixed column minsizes — clean, no clipping."""
+        """Pack-only layout — no grid to avoid child overflow past card height."""
         for w in self.winfo_children():
             w.destroy()
 
         info      = self.peer_info
         username  = info.get("username") or "Unknown"
         status    = info.get("status", "offline")
-        trust     = info.get("trust_state", TrustState.NEW)
+        trust     = info.get("trust_state", TrustState.NEW) or ""
         connected = bool(info.get("connected"))
         ip        = info.get("ip", "")
-        port      = str(info.get("port", ""))
+        port_num  = int(info.get("port") or 0)
         last_seen = float(info.get("last_seen") or 0)
         unread    = int(info.get("unread") or 0)
 
@@ -79,86 +79,96 @@ class PeerCard(ctk.CTkFrame):
         trust_fg = T.TRUST_FG.get(trust, T.TEXT_MUTED)
         trust_bg = T.TRUST_BG.get(trust, T.BG_CARD)
 
-        # Three columns: avatar (fixed) | text (flex) | right (fixed)
-        self.grid_columnconfigure(0, minsize=54, weight=0)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_columnconfigure(2, minsize=64, weight=0)
-        self.grid_rowconfigure(0, weight=1)
+        # ── Outer horizontal row ──────────────────────────────────────
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="both", expand=True, padx=10, pady=8)
 
-        # ── Avatar column ─────────────────────────────────────────────
-        av_cell = ctk.CTkFrame(self, fg_color="transparent", width=54, height=56)
-        av_cell.grid(row=0, column=0, sticky="nsew", pady=10)
-        av_cell.grid_propagate(False)
+        # ── Avatar (left, fixed 50×50) ────────────────────────────────
+        av_wrap = ctk.CTkFrame(row, fg_color="transparent", width=50, height=50)
+        av_wrap.pack(side="left", padx=(0, 8), pady=7)
+        av_wrap.pack_propagate(False)
 
-        av = ctk.CTkFrame(av_cell, width=44, height=44, corner_radius=22, fg_color=av_col)
-        av.place(relx=0.5, rely=0.5, anchor="center")
+        av = ctk.CTkFrame(av_wrap, width=44, height=44,
+                          corner_radius=22, fg_color=av_col)
+        av.pack(expand=True)
         av.pack_propagate(False)
         ctk.CTkLabel(av, text=username[0].upper(),
-                     font=("Segoe UI", 16, "bold"), text_color="#fff",
+                     font=("Segoe UI", 15, "bold"), text_color="#fff",
                      ).place(relx=0.5, rely=0.5, anchor="center")
 
-        dot = ctk.CTkFrame(av_cell, width=13, height=13, corner_radius=7,
-                           fg_color=dot_col, border_width=2, border_color=T.BG_CARD)
-        dot.place(relx=0.5, rely=0.5, x=14, y=14, anchor="center")
+        # Status dot — placed at bottom-right of av_wrap
+        dot = ctk.CTkFrame(av_wrap, width=13, height=13, corner_radius=7,
+                           fg_color=dot_col, border_width=2,
+                           border_color=T.BG_CARD)
+        dot.place(relx=1.0, rely=1.0, x=-1, y=-1, anchor="se")
 
-        # ── Text column ───────────────────────────────────────────────
-        txt = ctk.CTkFrame(self, fg_color="transparent")
-        txt.grid(row=0, column=1, sticky="nsew", pady=10, padx=(2, 2))
-        txt.grid_columnconfigure(0, weight=1)
+        # ── Text (right, flex) ────────────────────────────────────────
+        txt = ctk.CTkFrame(row, fg_color="transparent")
+        txt.pack(side="left", fill="both", expand=True)
 
-        ctk.CTkLabel(txt, text=username, anchor="w",
-                     font=("Segoe UI", 13, "bold"), text_color=T.TEXT_PRI,
-                     ).grid(row=0, column=0, sticky="ew")
+        # Row 1: name (left) + action (right)
+        name_row = ctk.CTkFrame(txt, fg_color="transparent")
+        name_row.pack(fill="x")
 
-        # Show IP:port only when port is known; otherwise show last-seen time.
-        # port may be 0 if the discovery heartbeat hasn't arrived yet.
-        if ip and port:
-            sub = f"{ip}:{port}"
-        elif last_seen:
-            sub = _time_ago(last_seen)
-        else:
-            sub = "Scanning…"
-        ctk.CTkLabel(txt, text=sub, anchor="w",
-                     font=("Consolas", 9), text_color=T.TEXT_MUTED,
-                     ).grid(row=1, column=0, sticky="ew")
-
-        badge = ctk.CTkFrame(txt, corner_radius=5, fg_color=trust_bg)
-        badge.grid(row=2, column=0, sticky="w", pady=(4, 0))
-        ctk.CTkLabel(badge, text=_TRUST_LABELS.get(trust or "", trust or ""),
-                     font=("Segoe UI", 9, "bold"), text_color=trust_fg,
-                     ).pack(padx=7, pady=2)
-
-        # ── Right column ──────────────────────────────────────────────
-        rgt = ctk.CTkFrame(self, fg_color="transparent", width=64)
-        rgt.grid(row=0, column=2, sticky="nsew", pady=10, padx=(0, 10))
-        rgt.grid_propagate(False)
-        rgt.grid_columnconfigure(0, weight=1)
-
-        ts_str = _time_ago(last_seen) if last_seen else ""
-        ctk.CTkLabel(rgt, text=ts_str, anchor="e",
-                     font=("Segoe UI", 8), text_color=T.TEXT_TIME,
-                     ).grid(row=0, column=0, sticky="ew")
+        disp = username[:16] + ("…" if len(username) > 16 else "")
+        ctk.CTkLabel(name_row, text=disp, anchor="w",
+                     font=("Segoe UI", 12, "bold"), text_color=T.TEXT_PRI,
+                     ).pack(side="left")
 
         if unread > 0:
-            # Unread pill — blue, like Telegram
-            pill = ctk.CTkFrame(rgt, width=22, height=22, corner_radius=11,
-                                fg_color=T.ACCENT)
-            pill.grid(row=1, column=0, sticky="e", pady=(4, 0))
-            pill.grid_propagate(False)
-            ctk.CTkLabel(pill, text=str(unread) if unread < 10 else "9+",
+            pill = ctk.CTkFrame(name_row, width=22, height=22,
+                                corner_radius=11, fg_color=T.ACCENT)
+            pill.pack(side="right")
+            pill.pack_propagate(False)
+            ctk.CTkLabel(pill,
+                         text=str(unread) if unread < 10 else "9+",
                          font=("Segoe UI", 9, "bold"), text_color="#fff",
                          ).place(relx=0.5, rely=0.5, anchor="center")
         elif connected:
-            ctk.CTkLabel(rgt, text="● live", anchor="e",
+            ctk.CTkLabel(name_row, text="● live",
                          font=("Segoe UI", 9, "bold"), text_color=T.ACCENT,
-                         ).grid(row=1, column=0, sticky="e", pady=(4, 0))
+                         ).pack(side="right")
         else:
             ctk.CTkButton(
-                rgt, text="Connect", width=60, height=24, corner_radius=12,
+                name_row, text="Connect", width=58, height=22,
+                corner_radius=11,
                 fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
-                text_color=T.TEXT_LINK, font=("Segoe UI", 10),
+                text_color=T.TEXT_LINK, font=("Segoe UI", 9),
                 command=self._do_connect,
-            ).grid(row=1, column=0, sticky="e", pady=(4, 0))
+            ).pack(side="right")
+
+        # Row 2: last message preview (or IP:port / last-seen as fallback)
+        last_msg  = info.get("last_message", "")
+        last_time = info.get("last_message_time", "")
+        if last_msg:
+            sub      = last_msg
+            sub_font = (T.FONT, 10)
+        elif ip and port_num:
+            sub      = f"{ip}:{port_num}"
+            sub_font = ("Consolas", 9)
+        elif last_seen:
+            sub      = _time_ago(last_seen)
+            sub_font = (T.FONT, 10)
+        else:
+            sub      = "Scanning…"
+            sub_font = (T.FONT, 10)
+
+        sub_row = ctk.CTkFrame(txt, fg_color="transparent")
+        sub_row.pack(fill="x")
+        ctk.CTkLabel(sub_row, text=sub, anchor="w",
+                     font=sub_font, text_color=T.TEXT_MUTED,
+                     ).pack(side="left", fill="x", expand=True)
+        if last_time:
+            ctk.CTkLabel(sub_row, text=last_time,
+                         font=(T.FONT, 9), text_color=T.TEXT_MUTED,
+                         ).pack(side="right")
+
+        # Row 3: trust badge
+        badge = ctk.CTkFrame(txt, corner_radius=5, fg_color=trust_bg)
+        badge.pack(anchor="w", pady=(3, 0))
+        ctk.CTkLabel(badge, text=_TRUST_LABELS.get(trust, trust),
+                     font=("Segoe UI", 9, "bold"), text_color=trust_fg,
+                     ).pack(padx=6, pady=2)
 
         # Propagate click & hover to all children
         for w in self.winfo_children():

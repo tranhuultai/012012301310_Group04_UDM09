@@ -1,65 +1,73 @@
 """Design tokens — single source of truth for all GUI colours, fonts, and sizes.
 
-Inspired by the Lumina P2P design system:
-- Indigo primary (closer to the reference #4648D4, adapted for dark context)
-- Tighter, more intentional palette — fewer shades, stronger hierarchy
-- Generous rounding for a "secure but approachable" feel
+Implements the Lumina P2P design system (light variant):
+- surface: #fcf8ff base with indigo-primary (#4648d4)
+- Teal secondary for security / verified indicators
+- Soft rounding: 8px standard, 12px cards, circular avatars
+- Typography: Inter rhythm via Segoe UI
 """
 from __future__ import annotations
 
-# ── Background layers (dark → light hierarchy) ────────────────────────────
-BG_APP      = "#0f1117"   # root window — deepest layer
-BG_SIDEBAR  = "#13151e"   # left panel
-BG_MAIN     = "#0f1117"   # chat column
-BG_HEADER   = "#1a1d2b"   # chat / sidebar headers
-BG_INPUT    = "#1a1d2b"   # bottom input bar
-BG_CARD     = "#1e2235"   # peer card normal
-BG_CARD_HOV = "#252a42"   # peer card hover
-BG_CARD_SEL = "#1e3163"   # peer card selected (indigo tinted)
-BG_BUBBLE_ME= "#3730a3"   # sent bubble — deep indigo (matches Lumina primary)
-BG_BUBBLE_IN= "#1e2235"   # received bubble
-BG_FIELD    = "#1a1d2b"   # detail info rows
-BG_DETAILS  = "#13151e"   # right panel
-BG_TOAST    = "#1e2235"   # toast notification
-BG_ENTRY    = "#1a1d2b"   # text entry
-BG_BADGE    = "#1e3163"   # unread badge background
+# ── Background layers (light hierarchy) ───────────────────────────────────
+BG_APP      = "#fcf8ff"   # surface — root window
+BG_SIDEBAR  = "#f5f2fe"   # surface-container-low — left panel
+BG_MAIN     = "#ffffff"   # pure white — chat column
+BG_HEADER   = "#efecf8"   # surface-container — headers
+BG_INPUT    = "#f5f2fe"   # bottom input bar
+BG_CARD     = "#ffffff"   # peer card / info card
+BG_CARD_HOV = "#efecf8"   # peer card hover
+BG_CARD_SEL = "#e1e0ff"   # peer card selected (primary-fixed)
+BG_BUBBLE_ME= "#4648d4"   # sent bubble — Lumina primary
+BG_BUBBLE_IN= "#efecf8"   # received bubble — surface-container
+BG_FIELD    = "#e9e6f3"   # info rows — surface-container-high
+BG_DETAILS  = "#f5f2fe"   # right panel
+BG_TOAST    = "#1b1b23"   # toast — dark on-surface for contrast
+BG_ENTRY    = "#ffffff"   # text entry
+BG_BADGE    = "#4648d4"   # unread badge
 
 # ── Borders / separators ──────────────────────────────────────────────────
-BORDER       = "#252a42"
-BORDER_LIGHT = "#2e3452"
+BORDER       = "#c7c4d7"   # outline-variant
+BORDER_LIGHT = "#e4e1ed"   # surface-container-highest
 
 # ── Text ──────────────────────────────────────────────────────────────────
-TEXT_PRI    = "#e8eaf6"   # primary — slightly warm white
-TEXT_SEC    = "#8892b0"   # secondary
-TEXT_MUTED  = "#4a5180"   # muted / placeholder
-TEXT_TIME   = "#363b5e"   # timestamps
-TEXT_LINK   = "#818cf8"   # links / accent labels (indigo-300)
+TEXT_PRI    = "#1b1b23"   # on-surface — primary text
+TEXT_SEC    = "#464554"   # on-surface-variant — secondary text
+TEXT_MUTED  = "#767586"   # outline — muted / placeholder
+TEXT_TIME   = "#767586"   # timestamps (same as muted)
+TEXT_LINK   = "#4648d4"   # primary — links / accent labels
 
-# ── Accents — indigo-first palette ────────────────────────────────────────
-ACCENT      = "#4f46e5"   # indigo-600 — primary action
-ACCENT_HOV  = "#4338ca"   # indigo-700
-ACCENT_DIM  = "#1e1b4b"   # indigo-950 — subtle background tint
-ACCENT_GLOW = "#312e81"   # indigo-900 — border on focus
+# ── Accents — Lumina primary palette ──────────────────────────────────────
+ACCENT      = "#4648d4"   # primary
+ACCENT_HOV  = "#2f2ebe"   # on-primary-fixed-variant
+ACCENT_DIM  = "#e1e0ff"   # primary-fixed — subtle tint
+ACCENT_GLOW = "#c0c1ff"   # primary-fixed-dim — focus ring
 
 # ── Semantic colours ──────────────────────────────────────────────────────
-SUCCESS     = "#10b981"   # emerald
-WARNING     = "#f59e0b"   # amber
-DANGER      = "#ef4444"   # red
-DANGER_DIM  = "#2d1a1a"   # dark red tint
+SUCCESS     = "#006b5f"   # secondary (teal) — verified / connected
+WARNING     = "#904900"   # tertiary (amber/sienna)
+DANGER      = "#ba1a1a"   # error
+DANGER_DIM  = "#ffdad6"   # error-container
+
+# ── Button-specific backgrounds (light theme needs explicit bg colours) ───
+BTN_SUCCESS_BG  = "#dcfce7"   # light green tint for trust button
+BTN_SUCCESS_HOV = "#bbf7d0"
+BTN_WARN_BG     = "#fef3c7"   # light amber for "Accept new key"
+BTN_WARN_HOV    = "#fde68a"
+BTN_DANGER_HOV  = "#fecaca"   # hover on block / disconnect
 
 # ── Trust palette ─────────────────────────────────────────────────────────
-TRUST_NEW      = "#f59e0b"
-TRUST_TRUSTED  = "#818cf8"   # indigo-300
-TRUST_VERIFIED = "#10b981"
-TRUST_MISMATCH = "#ef4444"
-TRUST_BLOCKED  = "#6b7280"
+TRUST_NEW      = "#904900"   # tertiary
+TRUST_TRUSTED  = "#4648d4"   # primary
+TRUST_VERIFIED = "#006b5f"   # secondary
+TRUST_MISMATCH = "#ba1a1a"   # error
+TRUST_BLOCKED  = "#767586"   # outline
 
 TRUST_BG: dict[str, str] = {
-    "NEW":      "#22190a",
-    "TRUSTED":  "#1e1b4b",
-    "VERIFIED": "#0a1f16",
-    "MISMATCH": "#2d0a0a",
-    "BLOCKED":  "#151618",
+    "NEW":      "#fef3c7",   # warm amber tint
+    "TRUSTED":  "#e1e0ff",   # primary-fixed
+    "VERIFIED": "#d1f5ed",   # light teal
+    "MISMATCH": "#ffdad6",   # error-container
+    "BLOCKED":  "#e9e6f3",   # surface-container-high
 }
 
 TRUST_FG: dict[str, str] = {
@@ -74,24 +82,24 @@ TRUST_FG: dict[str, str] = {
 STATUS_DOT: dict[str, str] = {
     "online":     SUCCESS,
     "connected":  ACCENT,
-    "offline":    "#2d3350",
+    "offline":    "#c7c4d7",
     "connecting": WARNING,
 }
 
 # ── Avatar palette ────────────────────────────────────────────────────────
 AVATAR_PALETTE: list[str] = [
-    "#4f46e5",  # indigo
+    "#4648d4",  # indigo (primary)
     "#7c3aed",  # violet
     "#0891b2",  # cyan
-    "#059669",  # emerald
+    "#006b5f",  # teal (secondary)
     "#d97706",  # amber
     "#dc2626",  # red
     "#db2777",  # pink
     "#0284c7",  # sky
 ]
 
-# ── Typography — closer to Inter rhythm ───────────────────────────────────
-FONT        = "Segoe UI"     # Windows; Inter if available
+# ── Typography — Inter rhythm via Segoe UI ────────────────────────────────
+FONT        = "Segoe UI"
 FONT_MONO   = "Consolas"
 FONT_TITLE  = (FONT, 14, "bold")
 FONT_BODY   = (FONT, 13)

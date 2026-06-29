@@ -401,12 +401,19 @@ class ChatController:
                 if active:
                     self.register_peer_tcp(peer_id, active)
                     return active
-            return info.get("tcp_address")
+            # Only return the stored tcp_address if the peer is still
+            # marked connected — otherwise it's stale from a previous session.
+            if info.get("connected"):
+                return info.get("tcp_address")
         return None
 
     def _tcp_to_peer_id(self, tcp_addr: str) -> Optional[str]:
         with self._map_lock:
             return self._tcp_to_peer.get(tcp_addr)
+
+    def set_current_peer(self, peer_id: Optional[str]) -> None:
+        """Set the currently-selected peer (called by GUI when user clicks a peer)."""
+        self._current_peer_id = peer_id
 
     def get_peer_id_for_tcp(self, tcp_addr: str) -> Optional[str]:
         """Return the peer_id registered for *tcp_addr*, or None.

@@ -116,8 +116,8 @@ class TrustDialog(ctk.CTkToplevel):
         ).pack(pady=14)
 
         self._button_row(
-            ("✓  Trust & Connect", "trust",  T.SUCCESS,  "#0a1f16"),
-            ("⊘  Block",           "block",  T.DANGER,   T.DANGER_DIM),
+            ("✓  Trust & Connect", "trust",  T.SUCCESS,    T.BTN_SUCCESS_BG),
+            ("⊘  Block",           "block",  T.DANGER,     T.DANGER_DIM),
             ("—  Skip",            "skip",   T.TEXT_MUTED, T.BG_FIELD),
         )
 
@@ -151,8 +151,8 @@ class TrustDialog(ctk.CTkToplevel):
         self._info_row(card, "Current", self.peer_info.get("current_fingerprint", "—"))
 
         self._button_row(
-            ("↺  Update & Trust", "update", T.WARNING,  "#2d1a00"),
-            ("⊘  Block Peer",     "block",  T.DANGER,   T.DANGER_DIM),
+            ("↺  Update & Trust", "update", T.WARNING, T.BTN_WARN_BG),
+            ("⊘  Block Peer",     "block",  T.DANGER,  T.DANGER_DIM),
         )
 
     # ------------------------------------------------------------------ #
@@ -196,10 +196,10 @@ class TrustDialog(ctk.CTkToplevel):
         """Return a slightly darker version of *hex_color* for hover state."""
         # Cheap approximation: just use a nearby dark tone.
         return {
-            "#0a1f16": "#065f46",
-            T.DANGER_DIM: "#7f1d1d",
-            "#2d1a00": "#451a03",
-            T.BG_FIELD: T.BG_CARD,
+            T.BTN_SUCCESS_BG: T.BTN_SUCCESS_HOV,
+            T.DANGER_DIM:     T.BTN_DANGER_HOV,
+            T.BTN_WARN_BG:    T.BTN_WARN_HOV,
+            T.BG_FIELD:       T.BG_CARD,
         }.get(hex_color, T.BG_CARD_HOV)
 
     # ------------------------------------------------------------------ #

@@ -149,7 +149,6 @@ class TransferManager:
         on_transfer_started:  Optional[Callable] = None,
         on_transfer_progress: Optional[Callable] = None,
         on_transfer_complete: Optional[Callable] = None,
-        on_transfer_error:    Optional[Callable] = None,
         on_file_meta:         Optional[Callable] = None,
     ) -> None:
         """Initialise and wire the node's on_file_packet hook.
@@ -160,8 +159,7 @@ class TransferManager:
             schedule_gui: A fn → None that schedules *fn* on the Tk thread.
             on_transfer_started: (tid, filename, peer_name, direction)
             on_transfer_progress: (tid, fraction) — fraction in [0, 1].
-            on_transfer_complete: (tid, success, message)
-            on_transfer_error: (tid, message)
+            on_transfer_complete: (tid, success, message) — success=False for errors.
             on_file_meta: (meta: TransferMeta, peer_name: str) — called when
                 the receiver gets a FILE_META and should show a Download button.
         """
@@ -172,7 +170,6 @@ class TransferManager:
         self.on_transfer_started  = on_transfer_started
         self.on_transfer_progress = on_transfer_progress
         self.on_transfer_complete = on_transfer_complete
-        self.on_transfer_error    = on_transfer_error
         self.on_file_meta         = on_file_meta
 
         # transfer_id → state dict
@@ -377,9 +374,9 @@ class TransferManager:
             return
         with self._lock:
             entry = self._transfers.get(tid)
-        if entry is None or entry["state"] != _ST_PENDING:
-            return
-        self._mark(tid, _ST_SENDING)
+            if entry is None or entry["state"] != _ST_PENDING:
+                return
+            entry["state"] = _ST_SENDING   # transition inside lock — prevents double-thread
 
         t = threading.Thread(
             target=self._send_file_thread,
@@ -428,7 +425,7 @@ class TransferManager:
             return
         with self._lock:
             entry = self._transfers.get(tid)
-        if entry is None or entry.get("state") not in (_ST_RECEIVING, _ST_SENDING):
+        if entry is None or entry.get("state") != _ST_RECEIVING:
             return
 
         b64_payload = packet.get("payload", "")
@@ -481,8 +478,10 @@ class TransferManager:
         if fh:
             try:
                 fh.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.error("[TRANSFER] Flush failed on close tid=%s: %s", tid[:8], exc)
+                self._finish(tid, False, "Disk flush error — file may be corrupt.")
+                return
 
         expected_sha = packet.get("sha256", "")
         part_path    = entry["part_path"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from tkinter import filedialog, messagebox
+from typing import Callable, Optional
 
 import customtkinter as ctk
 
@@ -21,6 +22,7 @@ class TransferPanel(ctk.CTkFrame):
     def __init__(self, master, controller=None, **kwargs) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
         self.controller = controller
+        self.on_file_sent: Optional[Callable[[str, str], None]] = None
         self._transfers: dict[str, dict] = {}
         self._visible = False
         self._build_ui()
@@ -113,10 +115,10 @@ class TransferPanel(ctk.CTkFrame):
         row = ctk.CTkFrame(card, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=(0, 8))
 
-        bar = ctk.CTkProgressBar(row, height=6, corner_radius=3,
-                                  fg_color=T.BG_CARD, progress_color=T.ACCENT)
-        bar.pack(side="left", fill="x", expand=True)
-        bar.set(0)
+        progress_bar = ctk.CTkProgressBar(row, height=6, corner_radius=3,
+                                          fg_color=T.BG_CARD, progress_color=T.ACCENT)
+        progress_bar.pack(side="left", fill="x", expand=True)
+        progress_bar.set(0)
 
         pct = ctk.CTkLabel(row, text="0%", width=32,
                             font=(T.FONT, 10), text_color=T.TEXT_SEC)
@@ -130,7 +132,7 @@ class TransferPanel(ctk.CTkFrame):
         ).pack(side="right")
 
         self._transfers[transfer_id] = {
-            "frame": card, "progress": bar, "percent": pct}
+            "frame": card, "progress": progress_bar, "percent": pct}
         self._refresh_count()
 
     def update_transfer(self, transfer_id: str, progress: float) -> None:
@@ -168,6 +170,14 @@ class TransferPanel(ctk.CTkFrame):
                 "Select a peer from the sidebar first, then try again.")
             return
 
+        peer_info = self.controller.get_peer_info(peer_id) or {}
+        if not peer_info.get("connected"):
+            uname = peer_info.get("username", "the peer")
+            messagebox.showwarning(
+                "Not connected",
+                f"Connect to {uname} first before sending files.")
+            return
+
         filepath = filedialog.askopenfilename(
             title="Send File  (max 10 MB · PDF, DOCX, TXT, PNG, JPG, ZIP)",
             filetypes=[
@@ -180,13 +190,9 @@ class TransferPanel(ctk.CTkFrame):
 
         ok, result = self.controller.send_file(filepath, peer_id)
         if ok:
-            # result is the transfer_id — give the user positive confirmation
             logger.info("[TRANSFER] File offer sent: %s", result[:8])
-            messagebox.showinfo(
-                "File offer sent",
-                "The file offer has been sent.\n"
-                "Transfer will begin when the recipient clicks Download.",
-            )
+            if self.on_file_sent is not None:
+                self.on_file_sent(filepath, peer_id)
         else:
             logger.warning("[TRANSFER] send_file rejected: %s", result)
             messagebox.showerror("Cannot send file", result)
