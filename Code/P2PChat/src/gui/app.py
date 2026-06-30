@@ -107,7 +107,7 @@ class ChatApp(ctk.CTk):
             font=("Segoe UI", 11), padx=16)
         # Not placed until first toast
 
-        # ── Start node (in background thread so UI appears immediately) ─
+        # - Start node (in background thread so UI appears immediately) -
         self._boot_ui()
         threading.Thread(target=self._start_node_bg,
                          daemon=True, name="NodeBoot").start()
