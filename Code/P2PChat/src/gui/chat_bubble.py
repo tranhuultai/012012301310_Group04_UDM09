@@ -1,11 +1,11 @@
 """Chat bubbles — responsive, Lumina-inspired message rendering.
 
 Design decisions:
-    - ``add_chat_bubble`` returns the message label so ChatBox can track
+    - add_chat_bubble returns the message label so ChatBox can track
       it for wraplength updates on window resize (CRITICAL for correctness).
     - Wraplength is passed in, not hardcoded, so resize events can update
       all existing bubbles uniformly.
-    - Sent bubbles align right with ``anchor="e"``; received align left.
+    - Sent bubbles align right with anchor="e"; received align left.
     - Both sides have a timestamp footer — intentional per the Lumina spec.
 """
 from __future__ import annotations
@@ -32,8 +32,8 @@ def add_chat_bubble(
     """Append one message bubble to *parent* and return the message label.
 
     The caller should store the returned label in a list so that
-    ``wraplength`` can be updated later when the chat column resizes.
-    Returns ``None`` only if an unexpected error occurs.
+    wraplength can be updated later when the chat column resizes.
+    Returns None only if an unexpected error occurs.
 
     Args:
         parent: A CTkScrollableFrame (or any CTk container using pack).

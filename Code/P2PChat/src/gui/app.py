@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import threading
 import time
 import uuid
+from pathlib import Path
 import customtkinter as ctk
 
 from config import (
@@ -19,7 +21,7 @@ from trust.trust_state import TrustState
 
 configure_logging()
 logger = logging.getLogger(__name__)
-ctk.set_appearance_mode("dark")
+ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 
@@ -53,6 +55,8 @@ class ChatApp(ctk.CTk):
         self._conversations: dict[str, list] = {}
         # Unread counts per peer_id (cleared when the peer is selected).
         self._unread: dict[str, int] = {}
+        # Last message preview for sidebar — (preview_text, HH:MM time).
+        self._last_preview: dict[str, tuple[str, str]] = {}
 
         # Peer IDs for which a MISMATCH TrustDialog is already open.
         # Prevents re-opening the dialog on every 5-second discovery heartbeat.
@@ -82,7 +86,6 @@ class ChatApp(ctk.CTk):
             self,
             on_peer_select    = self._handle_peer_selected,
             on_peer_connect   = self._handle_peer_connect,
-            on_contact_select = self._handle_contact_selected,
             on_trust          = self._handle_trust,
             on_block          = self._handle_block,
             on_manual_connect = self._handle_manual_connect,
@@ -95,6 +98,7 @@ class ChatApp(ctk.CTk):
         # Give the TransferPanel a reference to the controller so it can call
         # send_file / cancel_transfer directly.
         self.main_window.transfer_panel.controller = self.controller
+        self.main_window.transfer_panel.on_file_sent = self._handle_file_sent
 
         # ── Toast overlay (created once, hidden by default) ───────────
         self._toast = ctk.CTkLabel(
@@ -103,7 +107,7 @@ class ChatApp(ctk.CTk):
             font=("Segoe UI", 11), padx=16)
         # Not placed until first toast
 
-        # ── Start node (in background thread so UI appears immediately) ─
+        # - Start node (in background thread so UI appears immediately) -
         self._boot_ui()
         threading.Thread(target=self._start_node_bg,
                          daemon=True, name="NodeBoot").start()
@@ -180,6 +184,10 @@ class ChatApp(ctk.CTk):
         def _upd() -> None:
             # Store in that peer's in-memory conversation log.
             self._conversations.setdefault(peer_id, []).append(("in", sender, payload))
+            self._last_preview[peer_id] = (
+                payload[:40] + "…" if len(payload) > 40 else payload,
+                time.strftime("%H:%M"),
+            )
 
             if peer_id == self.selected_peer_id:
                 self.main_window.add_received_message(sender, payload)
@@ -188,7 +196,7 @@ class ChatApp(ctk.CTk):
                 preview = payload[:38] + "…" if len(payload) > 38 else payload
                 self._toast_show(f"💬  {sender}: {preview}")
                 self._apply_unread_badges()
-                self._schedule_peers_redraw()
+            self._schedule_peers_redraw()
         self.after(0, _upd)
 
     def _on_connected(self, peer_id: str, tcp_addr: str) -> None:
@@ -215,6 +223,8 @@ class ChatApp(ctk.CTk):
                     status      = "connected",
                     trust_state = info.get("trust_state", TrustState.NEW))
                 self.main_window.update_peer_details(info)
+                self.main_window.add_system_message(
+                    "🔗 Secure session started · End-to-End Encrypted")
             self._schedule_peers_redraw()
         self.after(0, _upd)
 
@@ -253,6 +263,7 @@ class ChatApp(ctk.CTk):
                     status      = "online",
                     trust_state = sel.get("trust_state", TrustState.NEW))
                 self.main_window.update_peer_details(sel)
+                self.main_window.add_system_message("🔌 Session ended")
             # If no peer is currently selected, restore the welcome placeholder.
             elif self.selected_peer_id is None:
                 self.main_window.show_empty_state()
@@ -273,9 +284,6 @@ class ChatApp(ctk.CTk):
     def _on_transfer_complete(self, tid: str, success: bool, message: str) -> None:
         """Mark the transfer card as done or failed, then remove it after a delay."""
         if success:
-            # message is "Sent <filename> successfully." or "Saved to <path>"
-            # Strip the full path — just show the filename/action in the toast.
-            import os  # pylint: disable=import-outside-toplevel
             short = message
             if "Saved to " in message:
                 short = "✓  Saved to downloads/" + os.path.basename(
@@ -335,6 +343,22 @@ class ChatApp(ctk.CTk):
             self._toast_show(f"📄 {peer_name}: {filename}", T.ACCENT)
             self._apply_unread_badges()
 
+    def _handle_file_sent(self, filepath: str, peer_id: str) -> None:
+        """Called by TransferPanel after FILE_META is sent — show bubble in sender's chat."""
+        path = Path(filepath)
+        size = path.stat().st_size if path.exists() else 0
+        if size < 1024:
+            size_str = f"{size} B"
+        elif size < 1024 * 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+
+        file_msg = f"📄 {path.name}\n{size_str}"
+        self._conversations.setdefault(peer_id, []).append(("file_out", "Me", file_msg))
+        if peer_id == self.selected_peer_id:
+            self.main_window.add_file_sent_message("Me", path.name, size_str)
+
     def _handle_download(self, transfer_id: str) -> None:
         """Called when the user clicks Download in a file message."""
         ok = self.controller.request_download(transfer_id)
@@ -385,7 +409,7 @@ class ChatApp(ctk.CTk):
             info: Discovery info dict (contains current fingerprint).
         """
         rec = self.controller.node.tofu.store.get_peer(peer_id) if self.controller.node else None
-        known_fp   = rec["fingerprint"] if rec else "—"
+        known_fp   = rec.get("fingerprint", "—") if rec else "—"
         current_fp = info.get("fingerprint", "—")
         username   = info.get("username", peer_id[:8])
 
@@ -431,6 +455,11 @@ class ChatApp(ctk.CTk):
 
     def _do_peers_redraw(self) -> None:
         self._peers_update_pending = False
+        # Inject last-message preview so sidebar cards can show it.
+        for pid, info in self.ui_state.discovered_peers.items():
+            preview_data = self._last_preview.get(pid)
+            if preview_data:
+                info["last_message"], info["last_message_time"] = preview_data
         self.main_window.update_discovered_peers(self.ui_state.discovered_peers)
         self._refresh_stats()
 
@@ -440,8 +469,7 @@ class ChatApp(ctk.CTk):
 
     def _handle_peer_selected(self, peer_id: str, peer_info: dict) -> None:
         self.selected_peer_id = peer_id
-        # Let TransferPanel know which peer is selected (for send_file).
-        self.controller._current_peer_id = peer_id  # pylint: disable=protected-access
+        self.controller.set_current_peer(peer_id)
         self.ui_state.select_peer(peer_id)
 
         # Clear unread badge for this peer.
@@ -455,22 +483,29 @@ class ChatApp(ctk.CTk):
             trust_state = peer_info.get("trust_state", TrustState.NEW))
 
         # Reload this peer's conversation into the chat area.
-        # On first select (or after restart), the in-memory log is empty — load
-        # from MessageHistory on disk so previous sessions are visible.
+        # Always load text messages from disk (authoritative source) — this
+        # fixes the race where _conversations[peer_id] was seeded by an
+        # incoming message before the user clicked the peer, causing the full
+        # disk history to be skipped.
         self.main_window.clear_chat()
-        if peer_id not in self._conversations:
-            records = self.controller.message_history.load_history(peer_id)
-            if records:
-                uname = peer_info.get("username", peer_id[:8])
-                loaded: list = []  # entries match _conversations format
-                for rec in records:
-                    if rec.get("direction") == "sent":
-                        loaded.append(("out", "Me", rec.get("content", "")))
-                    else:
-                        loaded.append(("in", uname, rec.get("content", "")))
-                self._conversations[peer_id] = loaded
+        uname = peer_info.get("username", peer_id[:8])
+        disk_records = self.controller.message_history.load_history(peer_id)
+        disk_entries: list = []
+        for rec in disk_records:
+            if rec.get("direction") == "sent":
+                disk_entries.append(("out", "Me", rec.get("content", "")))
+            else:
+                disk_entries.append(("in", uname, rec.get("content", "")))
 
-        for entry in self._conversations.get(peer_id, []):
+        # Preserve current-session file entries (file_in / file_out) — these
+        # are never written to disk, so they come only from this session.
+        session_files = [
+            e for e in self._conversations.get(peer_id, [])
+            if e[0] in ("file_in", "file_out")
+        ]
+        self._conversations[peer_id] = disk_entries + session_files
+
+        for entry in self._conversations[peer_id]:
             direction = entry[0]
             sender    = entry[1]
             msg       = entry[2]
@@ -478,18 +513,27 @@ class ChatApp(ctk.CTk):
                 self.main_window.add_sent_message(
                     "Me", peer_info.get("username", peer_id), msg)
             elif direction == "file_in":
-                # Restore file offer card with Download button.
                 tid = entry[3] if len(entry) > 3 else None
-                # Parse "📄 filename\nsize" back out
-                lines     = msg.split("\n", 1)
-                filename  = lines[0].replace("📄 ", "").strip()
-                size_str  = lines[1] if len(lines) > 1 else ""
+                lines    = msg.split("\n", 1)
+                filename = lines[0].replace("📄 ", "").strip()
+                size_str = lines[1] if len(lines) > 1 else ""
                 cb = (lambda t=tid: self._handle_download(t)) if tid else None
                 self.main_window.add_file_message(
                     sender=sender, filename=filename,
                     size_str=size_str, on_download=cb)
+            elif direction == "file_out":
+                lines    = msg.split("\n", 1)
+                filename = lines[0].replace("📄 ", "").strip()
+                size_str = lines[1] if len(lines) > 1 else ""
+                self.main_window.add_file_sent_message("Me", filename, size_str)
             else:
                 self.main_window.add_received_message(sender, msg)
+
+        # If no history and peer is not yet connected, show a hint.
+        if not self._conversations.get(peer_id):
+            if not peer_info.get("connected"):
+                self.main_window.add_system_message(
+                    "Click Connect to start an encrypted session")
 
         self.main_window.focus_message_box()
 
@@ -550,9 +594,6 @@ class ChatApp(ctk.CTk):
         self._toast_show(f"⭐  {alias} added to contacts", T.SUCCESS)
         self._refresh_stats()
         logger.info("[APP] Contact added: %s (%s)", peer_id[:12], alias)
-
-    def _handle_contact_selected(self, _contact: dict) -> None:
-        """Reserved for contacts panel."""
 
     def _handle_trust(self, peer_id: str) -> None:
         """Trust or Unblock the peer, depending on current state."""
@@ -626,9 +667,14 @@ class ChatApp(ctk.CTk):
             # Store in conversation log + render.
             self._conversations.setdefault(self.selected_peer_id, []).append(
                 ("out", "Me", msg))
+            self._last_preview[self.selected_peer_id] = (
+                f"You: {msg[:36]}…" if len(msg) > 36 else f"You: {msg}",
+                time.strftime("%H:%M"),
+            )
             self.main_window.add_sent_message(
                 "Me", sel.get("username", self.selected_peer_id[:8]), msg)
             self.main_window.clear_message_text()
+            self._schedule_peers_redraw()
         else:
             self._toast_show("⚠  Not connected — press Connect first.", T.DANGER)
 

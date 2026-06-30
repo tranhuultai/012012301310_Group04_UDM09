@@ -6,6 +6,14 @@ import customtkinter as ctk
 from gui import theme as T
 from trust.trust_state import TrustState
 
+_TRUST_LABELS: dict[str, str] = {
+    "NEW":      "New peer",
+    "TRUSTED":  "Trusted",
+    "VERIFIED": "Verified",
+    "MISMATCH": "Key changed ⚠",
+    "BLOCKED":  "Blocked",
+}
+
 
 class PeerDetails(ctk.CTkFrame):
     """Right panel: avatar, metadata rows, and action buttons."""
@@ -90,11 +98,11 @@ class PeerDetails(ctk.CTkFrame):
 
         self._trust_btn = self._btn(
             btn_card, "✓  Trust / Verify",
-            fg="#0a1f16", hover="#065f46", tc=T.SUCCESS,
+            fg=T.BTN_SUCCESS_BG, hover=T.BTN_SUCCESS_HOV, tc=T.SUCCESS,
             cmd=self._do_trust)
 
         self._contact_btn = self._btn(
-            btn_card, "＋  Add Contact",
+            btn_card, "⭐  Add Contact",
             fg=T.BG_FIELD, hover=T.BG_CARD, tc=T.TEXT_SEC,
             cmd=self._do_add_contact)
 
@@ -172,15 +180,16 @@ class PeerDetails(ctk.CTkFrame):
         self._fp_val.configure(text=fp)
 
         # Trust row
-        self._trust_val.configure(text=trust, text_color=trust_fg)
+        self._trust_val.configure(text=_TRUST_LABELS.get(trust, trust),
+                                   text_color=trust_fg)
         self._trust_row.configure(fg_color=trust_bg)
 
         # Connect button doubles as Disconnect when a session is active.
         if connected:
             self._connect_btn.configure(
                 text="⏹  Disconnect", state="normal",
-                fg_color="#3a1f2a", hover_color="#7f1d1d",
-                text_color="#fca5a5")
+                fg_color=T.DANGER_DIM, hover_color=T.BTN_DANGER_HOV,
+                text_color=T.DANGER)
         else:
             self._connect_btn.configure(
                 text="⎋  Connect", state="normal",
@@ -189,26 +198,23 @@ class PeerDetails(ctk.CTkFrame):
 
         # Trust/Block button states — mutually exclusive actions
         if trust == TrustState.BLOCKED:
-            # Peer is blocked: offer Unblock via the green button,
-            # disable Block (already blocked).
             self._trust_btn.configure(
                 text="↩  Unblock Peer",
-                fg_color="#1a3030", text_color=T.SUCCESS)
+                fg_color=T.BTN_SUCCESS_BG, text_color=T.SUCCESS)
             self._block_btn.configure(
                 text="⊘  Blocked",
                 state="disabled", fg_color=T.BG_FIELD, text_color=T.TEXT_MUTED)
         elif trust == TrustState.MISMATCH:
-            # Fingerprint changed — warn user prominently.
             self._trust_btn.configure(
                 text="⚠  Accept New Key",
-                fg_color="#2d1a00", text_color=T.WARNING)
+                fg_color=T.BTN_WARN_BG, text_color=T.WARNING)
             self._block_btn.configure(
                 text="⊘  Block Peer",
                 state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)
         else:
             self._trust_btn.configure(
                 text="✓  Trust / Verify",
-                fg_color="#0a1f16", text_color=T.SUCCESS)
+                fg_color=T.BTN_SUCCESS_BG, text_color=T.SUCCESS)
             self._block_btn.configure(
                 text="⊘  Block Peer",
                 state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)

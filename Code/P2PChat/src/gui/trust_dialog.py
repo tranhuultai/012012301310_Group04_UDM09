@@ -12,16 +12,16 @@ class TrustDialog(ctk.CTkToplevel):
 
     Modes
     -----
-    ``new_peer``
+    new_peer
         Shown on first contact.  Offers Trust, Block, Skip.
-    ``warning``
+    warning
         Shown when a known peer's fingerprint changed (possible MITM).
         Offers Update & Trust, Block.
 
-    Callback results: ``"trust"`` | ``"block"`` | ``"skip"`` | ``"update"``
+    Callback results: "trust" | "block" | "skip" | "update"
 
-    Design note: ``grab_set()`` is called *after* all widgets are built.
-    Calling it earlier (in ``_setup_window``) causes the window to capture
+    Design note: grab_set() is called *after* all widgets are built.
+    Calling it earlier (in _setup_window) causes the window to capture
     events before it is visible, making buttons unresponsive.
     """
 
@@ -36,10 +36,10 @@ class TrustDialog(ctk.CTkToplevel):
 
         Args:
             master: Parent Tk widget (root window or top-level).
-            mode: ``"new_peer"`` or ``"warning"``.
-            peer_info: Dict with peer identity fields.  For ``"warning"`` mode
-                must also contain ``known_fingerprint`` and
-                ``current_fingerprint``.
+            mode: "new_peer" or "warning".
+            peer_info: Dict with peer identity fields.  For "warning" mode
+                must also contain known_fingerprint and
+                current_fingerprint.
             callback: Called with the result string when the user acts.
         """
         super().__init__(master)
@@ -116,8 +116,8 @@ class TrustDialog(ctk.CTkToplevel):
         ).pack(pady=14)
 
         self._button_row(
-            ("✓  Trust & Connect", "trust",  T.SUCCESS,  "#0a1f16"),
-            ("⊘  Block",           "block",  T.DANGER,   T.DANGER_DIM),
+            ("✓  Trust & Connect", "trust",  T.SUCCESS,    T.BTN_SUCCESS_BG),
+            ("⊘  Block",           "block",  T.DANGER,     T.DANGER_DIM),
             ("—  Skip",            "skip",   T.TEXT_MUTED, T.BG_FIELD),
         )
 
@@ -151,8 +151,8 @@ class TrustDialog(ctk.CTkToplevel):
         self._info_row(card, "Current", self.peer_info.get("current_fingerprint", "—"))
 
         self._button_row(
-            ("↺  Update & Trust", "update", T.WARNING,  "#2d1a00"),
-            ("⊘  Block Peer",     "block",  T.DANGER,   T.DANGER_DIM),
+            ("↺  Update & Trust", "update", T.WARNING, T.BTN_WARN_BG),
+            ("⊘  Block Peer",     "block",  T.DANGER,  T.DANGER_DIM),
         )
 
     # ------------------------------------------------------------------ #
@@ -178,7 +178,7 @@ class TrustDialog(ctk.CTkToplevel):
         """Render a row of action buttons.
 
         Args:
-            buttons: Each item is ``(label, result, text_color, fg_color)``.
+            buttons: Each item is (label, result, text_color, fg_color).
         """
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(pady=16)
@@ -196,10 +196,10 @@ class TrustDialog(ctk.CTkToplevel):
         """Return a slightly darker version of *hex_color* for hover state."""
         # Cheap approximation: just use a nearby dark tone.
         return {
-            "#0a1f16": "#065f46",
-            T.DANGER_DIM: "#7f1d1d",
-            "#2d1a00": "#451a03",
-            T.BG_FIELD: T.BG_CARD,
+            T.BTN_SUCCESS_BG: T.BTN_SUCCESS_HOV,
+            T.DANGER_DIM:     T.BTN_DANGER_HOV,
+            T.BTN_WARN_BG:    T.BTN_WARN_HOV,
+            T.BG_FIELD:       T.BG_CARD,
         }.get(hex_color, T.BG_CARD_HOV)
 
     # ------------------------------------------------------------------ #
@@ -210,7 +210,7 @@ class TrustDialog(ctk.CTkToplevel):
         """Call the callback with *result* and close the dialog.
 
         Args:
-            result: One of ``"trust"``, ``"block"``, ``"skip"``, ``"update"``.
+            result: One of "trust", "block", "skip", "update".
         """
         try:
             self.grab_release()

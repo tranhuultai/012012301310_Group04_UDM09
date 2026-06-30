@@ -119,7 +119,7 @@ class ProtocolHandler:
             packet: Dict to serialise as JSON.
 
         Returns:
-            Bytes in the format ``[4-byte big-endian length][JSON body]``.
+            Bytes in the format [4-byte big-endian length][JSON body].
         """
         json_data = json.dumps(packet).encode("utf-8")
         return struct.pack("!I", len(json_data)) + json_data
@@ -185,7 +185,7 @@ class ProtocolHandler:
         """Decrypt packet payload.
 
         Args:
-            packet: Packet dict containing a ``payload`` key.
+            packet: Packet dict containing a payload key.
             crypto: Active CryptoHandler, or None for plain payloads.
 
         Returns:
@@ -228,7 +228,7 @@ class ProtocolHandler:
             size: Number of bytes to read.
 
         Returns:
-            Bytes read, or ``b""`` when the connection is closed.
+            Bytes read, or b"" when the connection is closed.
         """
         received_data = bytearray()
         while len(received_data) < size:
@@ -265,7 +265,11 @@ class ProtocolHandler:
             if not packet_data:
                 return None
 
-            return json.loads(packet_data.decode("utf-8"))
+            result = json.loads(packet_data.decode("utf-8"))
+            if not isinstance(result, dict):
+                logger.warning("receive_packet: expected JSON object, got %s", type(result).__name__)
+                return None
+            return result
 
         except OSError as exc:
             # WinError 10054 (connection reset) and 10053 (connection aborted)

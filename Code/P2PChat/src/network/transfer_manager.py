@@ -31,6 +31,7 @@ import logging
 import threading
 import time
 import uuid
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -49,40 +50,21 @@ _ST_CANCELLED = "cancelled"
 _ST_ERROR     = "error"
 
 
+@dataclass
 class TransferMeta:
-    """Immutable record describing a file transfer (DTO — frozen after creation).
-
-    Attributes:
-        transfer_id: UUID4 string identifying this transfer.
-        filename: Base filename (no path) of the file.
-        filesize: Total size in bytes.
-        mime_type: MIME type string (e.g. ``"application/pdf"``).
-        sha256: Hex digest of the complete file contents.
-        sender_id: SHA-256 peer_id of the sender.
-        receiver_id: SHA-256 peer_id of the receiver.
-        timestamp: Unix timestamp when the transfer was created.
-    """
-
-    __slots__ = (
-        "transfer_id", "filename", "filesize", "mime_type",
-        "sha256", "sender_id", "receiver_id", "timestamp",
-    )
-
-    def __init__(self, transfer_id: str, filename: str, filesize: int,
-                 mime_type: str, sha256: str, sender_id: str,
-                 receiver_id: str, timestamp: float) -> None:
-        self.transfer_id = transfer_id
-        self.filename    = filename
-        self.filesize    = filesize
-        self.mime_type   = mime_type
-        self.sha256      = sha256
-        self.sender_id   = sender_id
-        self.receiver_id = receiver_id
-        self.timestamp   = timestamp
+    """Metadata for a file transfer — created once, not modified after."""
+    transfer_id: str
+    filename:    str
+    filesize:    int
+    mime_type:   str
+    sha256:      str
+    sender_id:   str
+    receiver_id: str
+    timestamp:   float
 
     def to_dict(self) -> dict:
         """Serialise to a plain dict for JSON transport."""
-        return {slot: getattr(self, slot) for slot in self.__slots__}
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "TransferMeta":
@@ -129,16 +111,16 @@ class TransferManager:
     * Validate files before sending (size, extension).
     * Build and dispatch FILE_META / FILE_START / FILE_CHUNK / FILE_COMPLETE.
     * Receive and dispatch DOWNLOAD_REQUEST / FILE_CHUNK / FILE_COMPLETE.
-    * Write received chunks to ``.part`` files; rename on integrity check.
+    * Write received chunks to .part files; rename on integrity check.
     * Report progress to the GUI through lightweight callbacks.
     * Never block the GUI thread or the network receive thread.
 
     Thread model
     ------------
-    Each outbound transfer runs in its own daemon thread (``_SendThread``).
-    The inbound chunk-write loop also runs in a daemon thread (``_RecvThread``).
-    Both threads communicate with the GUI exclusively through the ``after()``
-    mechanism supplied by the ChatApp (via ``schedule_gui``).
+    Each outbound transfer runs in its own daemon thread (_SendThread).
+    The inbound chunk-write loop also runs in a daemon thread (_RecvThread).
+    Both threads communicate with the GUI exclusively through the after()
+    mechanism supplied by the ChatApp (via schedule_gui).
     """
 
     def __init__(
@@ -149,7 +131,6 @@ class TransferManager:
         on_transfer_started:  Optional[Callable] = None,
         on_transfer_progress: Optional[Callable] = None,
         on_transfer_complete: Optional[Callable] = None,
-        on_transfer_error:    Optional[Callable] = None,
         on_file_meta:         Optional[Callable] = None,
     ) -> None:
         """Initialise and wire the node's on_file_packet hook.
@@ -157,12 +138,11 @@ class TransferManager:
         Args:
             node: The running P2PNode instance.
             controller: ChatController (for tcp address lookup).
-            schedule_gui: A ``fn → None`` that schedules *fn* on the Tk thread.
-            on_transfer_started: ``(tid, filename, peer_name, direction)``
-            on_transfer_progress: ``(tid, fraction)`` — fraction in [0, 1].
-            on_transfer_complete: ``(tid, success, message)``
-            on_transfer_error: ``(tid, message)``
-            on_file_meta: ``(meta: TransferMeta, peer_name: str)`` — called when
+            schedule_gui: A fn → None that schedules *fn* on the Tk thread.
+            on_transfer_started: (tid, filename, peer_name, direction)
+            on_transfer_progress: (tid, fraction) — fraction in [0, 1].
+            on_transfer_complete: (tid, success, message) — success=False for errors.
+            on_file_meta: (meta: TransferMeta, peer_name: str) — called when
                 the receiver gets a FILE_META and should show a Download button.
         """
         self._node         = node
@@ -172,7 +152,6 @@ class TransferManager:
         self.on_transfer_started  = on_transfer_started
         self.on_transfer_progress = on_transfer_progress
         self.on_transfer_complete = on_transfer_complete
-        self.on_transfer_error    = on_transfer_error
         self.on_file_meta         = on_file_meta
 
         # transfer_id → state dict
@@ -197,7 +176,7 @@ class TransferManager:
             peer_id: SHA-256 identifier of the destination peer.
 
         Returns:
-            ``(True, transfer_id)`` if meta was sent, ``(False, error_msg)``
+            (True, transfer_id) if meta was sent, (False, error_msg)
             if validation failed or peer is not connected.
         """
         path = Path(filepath)
@@ -377,9 +356,9 @@ class TransferManager:
             return
         with self._lock:
             entry = self._transfers.get(tid)
-        if entry is None or entry["state"] != _ST_PENDING:
-            return
-        self._mark(tid, _ST_SENDING)
+            if entry is None or entry["state"] != _ST_PENDING:
+                return
+            entry["state"] = _ST_SENDING   # transition inside lock — prevents double-thread
 
         t = threading.Thread(
             target=self._send_file_thread,
@@ -428,7 +407,7 @@ class TransferManager:
             return
         with self._lock:
             entry = self._transfers.get(tid)
-        if entry is None or entry.get("state") not in (_ST_RECEIVING, _ST_SENDING):
+        if entry is None or entry.get("state") != _ST_RECEIVING:
             return
 
         b64_payload = packet.get("payload", "")
@@ -481,8 +460,10 @@ class TransferManager:
         if fh:
             try:
                 fh.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.error("[TRANSFER] Flush failed on close tid=%s: %s", tid[:8], exc)
+                self._finish(tid, False, "Disk flush error — file may be corrupt.")
+                return
 
         expected_sha = packet.get("sha256", "")
         part_path    = entry["part_path"]
@@ -636,6 +617,20 @@ class TransferManager:
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
 
+    def cleanup_peer(self, tcp_addr: str) -> None:
+        """Close any open file handles for transfers involving *tcp_addr*.
+
+        Called when a peer disconnects abruptly (no FILE_CANCEL received).
+        """
+        with self._lock:
+            tids = [
+                tid for tid, e in self._transfers.items()
+                if e.get("tcp_addr") == tcp_addr and e.get("state") == _ST_RECEIVING
+            ]
+        for tid in tids:
+            self._cleanup_recv(tid)
+            self._finish(tid, False, "Peer disconnected during transfer.")
+
     def _get_crypto(self, tcp_addr: str) -> Optional[CryptoHandler]:
         """Return the Fernet CryptoHandler for *tcp_addr*, or None."""
         with self._node.peers_lock:
@@ -685,19 +680,19 @@ class TransferManager:
     def _safe_save_path(self, filename: str) -> Path:
         """Return a non-colliding save path under FILE_DOWNLOAD_DIR.
 
-        If ``downloads/report.pdf`` already exists, tries
-        ``downloads/report_1.pdf``, ``downloads/report_2.pdf``, …
+        If downloads/report.pdf already exists, tries
+        downloads/report_1.pdf, downloads/report_2.pdf, …
 
         Args:
             filename: Base filename from the transfer metadata.
 
         Returns:
-            A ``Path`` object guaranteed not to exist at call time.
+            A Path object guaranteed not to exist at call time.
         """
         base     = Path(FILE_DOWNLOAD_DIR)
         stem     = Path(filename).stem
         suffix   = Path(filename).suffix
-        candidate = base / filename
+        candidate = base / Path(filename).name  # strip any directory components from sender
         counter  = 0
         while candidate.exists():
             counter  += 1

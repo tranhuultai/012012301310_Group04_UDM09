@@ -10,8 +10,8 @@ from storage.storage_manager import StorageManager
 class MessageHistory:
     """Persistent per-peer message log.
 
-    Each peer gets its own JSON file under ``data/storage/chat_history/``
-    named ``<peer_id>.json``.  Records follow the HistoryRecord DTO::
+    Each peer gets its own JSON file under data/storage/chat_history/
+    named <peer_id>.json.  Records follow the HistoryRecord DTO::
 
         {
             "message_id": "...",
@@ -64,7 +64,7 @@ class MessageHistory:
     def append_message(self, peer_id: str, record: dict[str, Any]) -> None:
         """Append one message record and persist atomically.
 
-        Thread-safe: acquires ``_lock`` for the full read-modify-write cycle
+        Thread-safe: acquires _lock for the full read-modify-write cycle
         so that concurrent calls from multiple receive threads cannot lose
         each other's messages.
 

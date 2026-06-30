@@ -88,6 +88,7 @@ class TestMimeForExt:
                   ".wordprocessingml.document"),
     ])
     def test_known_extensions(self, ext: str, expected: str) -> None:
+        """Each supported extension must map to its expected MIME type."""
         assert _mime_for_ext(ext) == expected
 
     def test_unknown_extension_fallback(self) -> None:
@@ -129,11 +130,12 @@ class TestTransferMeta:
         assert meta2.timestamp   == meta.timestamp
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict must include every __slots__ field."""
+        """to_dict must include every dataclass field."""
+        import dataclasses  # pylint: disable=import-outside-toplevel
         meta = self._make_meta()
         d    = meta.to_dict()
-        for slot in TransferMeta.__slots__:
-            assert slot in d, f"Missing field: {slot}"
+        for f in dataclasses.fields(meta):
+            assert f.name in d, f"Missing field: {f.name}"
 
     def test_from_dict_filesize_coercion(self) -> None:
         """from_dict coerces filesize to int even when stored as string."""
@@ -199,7 +201,7 @@ class TestTotalChunks:
 class TestSafeSavePath:
     """_safe_save_path must never return a path that already exists."""
 
-    def _make_manager(self, tmp_path: Path) -> TransferManager:
+    def _make_manager(self, _tmp_path: Path) -> TransferManager:
         """Create a minimal TransferManager stub with patched download dir."""
         mgr = object.__new__(TransferManager)  # skip __init__
         mgr._node         = MagicMock()
@@ -257,7 +259,7 @@ class TestSafeSavePath:
 class TestSendFileValidation:
     """send_file must reject invalid inputs before attempting any I/O."""
 
-    def _make_manager_with_node(self, tmp_path: Path) -> TransferManager:
+    def _make_manager_with_node(self, _tmp_path: Path) -> TransferManager:
         """Minimal manager where _ctrl._peer_id_to_tcp returns None (not connected)."""
         mgr = object.__new__(TransferManager)
         node_mock             = MagicMock()
@@ -279,6 +281,7 @@ class TestSendFileValidation:
         return mgr
 
     def test_unsupported_extension(self, tmp_path: Path) -> None:
+        """send_file must reject files with extensions not in the allow-list."""
         f = tmp_path / "malware.exe"
         f.write_bytes(b"data")
         mgr = self._make_manager_with_node(tmp_path)
@@ -293,6 +296,7 @@ class TestSendFileValidation:
         assert "not found" in msg
 
     def test_empty_file(self, tmp_path: Path) -> None:
+        """send_file must reject zero-byte files."""
         f = tmp_path / "empty.pdf"
         f.write_bytes(b"")
         mgr = self._make_manager_with_node(tmp_path)
@@ -301,6 +305,7 @@ class TestSendFileValidation:
         assert "empty" in msg.lower()
 
     def test_file_too_large(self, tmp_path: Path) -> None:
+        """send_file must reject files exceeding the 10 MB limit."""
         f = tmp_path / "big.pdf"
         # Create a file slightly over the 10 MB limit.
         f.write_bytes(b"x" * (FILE_MAX_SIZE + 1))

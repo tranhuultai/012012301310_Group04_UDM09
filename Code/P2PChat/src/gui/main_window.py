@@ -35,7 +35,7 @@ class MainWindow(ctk.CTkFrame):
 
     def __init__(self, master,
                  on_peer_select=None, on_peer_connect=None,
-                 on_contact_select=None, on_trust=None, on_block=None,
+                 on_trust=None, on_block=None,
                  on_manual_connect=None, on_broadcast=None,
                  on_disconnect=None, on_add_contact=None) -> None:
         super().__init__(master, fg_color=T.BG_APP)
@@ -46,8 +46,6 @@ class MainWindow(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(2, weight=0)
 
-        # on_contact_select reserved for future contacts panel integration
-        self._on_contact_select = on_contact_select
         self._build_sidebar(on_peer_select, on_peer_connect, on_manual_connect)
         self._build_chat(on_broadcast)
         self._build_details(on_trust, on_block, on_peer_connect, on_disconnect,
@@ -127,7 +125,8 @@ class MainWindow(ctk.CTkFrame):
                      font=(T.FONT, 18, "bold"), text_color=T.TEXT_PRI,
                      ).pack(pady=(12, 6))
         ctk.CTkLabel(self._empty_frame,
-                     text="Select a peer from the sidebar to open an\nend-to-end encrypted conversation.",
+                     text="Select a peer from the sidebar to open an\n"
+                          "end-to-end encrypted conversation.",
                      font=(T.FONT, 12), text_color=T.TEXT_MUTED,
                      justify="center").pack()
 
@@ -221,6 +220,16 @@ class MainWindow(ctk.CTkFrame):
         """Add a received message bubble."""
         self.chat_box.add_received(sender, msg)
 
+    def add_file_sent_message(self, sender: str, filename: str, size_str: str) -> None:
+        """Show a right-aligned sent-file card (no download button).
+
+        Args:
+            sender: Local display name.
+            filename: File name sent.
+            size_str: Pre-formatted size string.
+        """
+        self.chat_box.add_file_sent(sender, filename, size_str)
+
     def add_file_message(self, sender: str, filename: str,
                          size_str: str, on_download=None) -> None:
         """Show a file-offer card in the chat area.
@@ -304,7 +313,7 @@ class MainWindow(ctk.CTkFrame):
             tid: Unique transfer ID.
             filename: Name of the file being transferred.
             peer: Display name of the remote peer.
-            direction: ``"out"`` or ``"in"``.
+            direction: "out" or "in".
         """
         self.transfer_panel.add_transfer(tid, filename, peer, direction)
 
@@ -313,7 +322,7 @@ class MainWindow(ctk.CTkFrame):
 
         Args:
             tid: Unique transfer ID.
-            progress: Value in ``[0, 1]``.
+            progress: Value in [0, 1].
         """
         self.transfer_panel.update_transfer(tid, progress)
 
@@ -347,7 +356,7 @@ class MainWindow(ctk.CTkFrame):
         """Display the TOFU security verification dialog.
 
         Args:
-            mode: ``"new_peer"`` or ``"warning"``.
+            mode: "new_peer" or "warning".
             peer_info: PeerInfo dict passed to the dialog.
             callback: Called with the user's decision string.
         """

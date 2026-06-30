@@ -1,187 +1,205 @@
-# 💬 UDM_09 · P2P Chat GUI
+# P2PChat
 
-> Ứng dụng chat ngang hàng (Peer-to-Peer) không cần server trung tâm.
-> Project được phát triển cho môn Lập trình Mạng bằng Python.
-
----
-
-## 📌 Thông tin project
-
-| Thành phần | Thông tin                   |
-| ---------- | --------------------------- |
-| Lớp        | 012012301310                |
-| Nhóm       | Net2_Group_04               |
-| Ngôn ngữ   | Python 3.13+                |
-| Mô hình    | Peer-to-Peer (P2P)          |
-| Nền tảng   | Windows Desktop Application |
-| IDE        | Visual Studio Code          |
----
-
-## 📖 Tổng quan
-
-P2P Chat GUI là project xây dựng ứng dụng chat ngang hàng có giao diện GUI chạy trên Windows.
-
-Ứng dụng cho phép các peer kết nối trực tiếp với nhau thông qua TCP Socket mà không cần sử dụng server trung tâm.
-
-Project tập trung vào:
-
-* TCP Socket Programming
-* Peer-to-Peer Communication
-* Multi-threading
-* GUI Desktop Application
-* Message Encryption
+Ứng dụng chat P2P (peer-to-peer) không cần server, có mã hóa và giao diện GUI. Project môn Lập trình Mạng — UTH.
 
 ---
 
-## ✨ Chức năng dự kiến
+## Thông tin nhóm
 
-### Chức năng cốt lõi
+| Thành phần | Thông tin |
+| --- | --- |
+| Lớp | 012012301310 |
+| Nhóm | Group 04 — UDM09 |
+| Ngôn ngữ | Python 3.13+ |
+| Mô hình | Peer-to-Peer, không server trung tâm |
+| Nền tảng | Windows |
+| Repo | [012012301310\_Group04\_UDM09](https://github.com/tranhuultai/012012301310_Group04_UDM09) |
 
-* Kết nối trực tiếp giữa các peer
-* Chat realtime
-* Broadcast message
-* Mã hóa tin nhắn bằng Fernet (AES-128-CBC)
-* Multi-thread networking
-* Theo dõi trạng thái kết nối
-* Validate IP và port đầu vào
+### Thành viên
 
----
-
-### Chức năng mở rộng
-
-* Logging lịch sử chat
-* Reconnect peer
-* File transfer cơ bản
-* Theo dõi hiệu suất hệ thống
-* Stress test và performance test
-
----
-
-## ⚙️ Kiến trúc kỹ thuật dự kiến
-
-### Giao thức truyền dữ liệu
-
-```text
-┌─────────────┬──────────────────────────────┐
-│  4 bytes    │  N bytes                     │
-│  (length)   │  (encrypted payload)         │
-└─────────────┴──────────────────────────────┘
-```
-
-* 4 bytes đầu dùng để xác định kích thước dữ liệu
-* Payload sẽ được mã hóa trước khi truyền
+| MSSV | Họ tên |
+| --- | --- |
+| 089205009200 | Trần Hữu Tài |
+| 052206013184 | Nguyễn Văn Tài |
+| 080306012851 | Trần Thị Thanh Thơ |
+| 052206003938 | Nguyễn Phan Hoài Bình |
+| 082206002652 | Lê Quốc Thịnh |
 
 ---
 
-### Mô hình threading
+## Mô tả
 
-```text
-main thread (GUI)
-    │
-    ├── server-listener thread
-    ├── connect thread
-    └── receive thread × N
-```
+Các máy tính trong cùng mạng LAN tự tìm thấy nhau qua UDP broadcast, sau đó kết nối trực tiếp qua TCP để chat. Không có server trung tâm — mỗi máy vừa là client vừa là server.
+
+Tin nhắn được mã hóa end-to-end: RSA-2048 để trao đổi khóa lúc kết nối, Fernet (AES-128) để mã hóa nội dung trong suốt phiên chat. Có thể gửi file tối đa 10MB, kiểm tra toàn vẹn bằng SHA-256.
 
 ---
 
-## 🏗️ Cấu trúc project
+## Chức năng
 
-```text
-UDM09_P2PChat-GUI-
-├── Code/
-│   └── P2PChat/
-│       └── src/
-│           ├── main.py
-│           ├── protocol.py
-│           ├── gui/
-│           │   └── app.py
-│           └── node/
-│               └── core.py
-│
-├── DOCX/
-├── PPTX/
-├── Extra/
-│
-├── .gitignore
-├── README.md
-└── requirements.txt
-```
+### Networking
+
+- Tự động tìm peer trong LAN qua UDP broadcast (mỗi 5 giây)
+- Kết nối TCP trực tiếp, không relay
+- Kết nối thủ công bằng cách nhập IP:Port
+- Mỗi kết nối chạy trên thread riêng, GUI không bị đơ
+
+### Bảo mật
+
+- RSA-2048: trao đổi khóa khi bắt đầu kết nối
+- Fernet: mã hóa toàn bộ tin nhắn và file trong session
+- JWT: xác thực gói UDP discovery, chống giả mạo
+- TOFU (Trust On First Use): lưu fingerprint RSA của peer, cảnh báo nếu key thay đổi
+- Chống replay attack: dùng `deque + set` để track message_id đã thấy
+
+### File transfer
+
+- Hỗ trợ PDF, DOCX, TXT, PNG, JPG, ZIP (giới hạn 10MB)
+- Mã hóa file bằng Fernet, encode Base64 để truyền qua JSON
+- Verify SHA-256 sau khi nhận xong
+- File lưu vào `src/downloads/`
+
+### Giao diện
+
+- Sidebar tự cập nhật danh sách peer, hiển thị tin nhắn gần nhất
+- Chat bubble trái/phải, có timestamp
+- File bubble hiện trong khung chat (không cần mở tab khác)
+- Lịch sử chat được lưu và tải lại khi mở app
 
 ---
 
-## 🚀 Khởi tạo project
+## Cài đặt
 
 ```bash
-git clone https://github.com/tranhuultai/UDM09_P2PChat-GUI-.git
+pip install customtkinter cryptography PyJWT
+```
+
+Yêu cầu Python 3.13 trở lên, Windows 10/11.
+
+---
+
+## Chạy
+
+```bash
+cd Code/P2PChat/src
+
+# Chạy bình thường (port 12000)
+python main.py
+
+# Chạy thêm instance để test trên cùng máy
+python main.py 1000
 ```
 
 ---
 
-## 📋 Tiến độ Sprint
+## Hướng dẫn dùng
 
-### ✅ Sprint 1 (Tuần 1–2)
+**Kết nối với peer:**
 
-* [x] Nghiên cứu mô hình P2P và cơ chế AES-128-CBC
-* [x] Setup GitHub repository
-* [x] Thiết kế cấu trúc project và giao diện GUI
-* [x] Implement TCP connection
-* [x] Implement handshake cơ bản
+Nếu cùng mạng LAN thì peer tự xuất hiện trong sidebar sau vài giây, click vào rồi nhấn Connect là xong.
 
----
+Nếu khác mạng thì nhấn "+ Add / Discover Peer" ở dưới sidebar, nhập IP và Port rồi Connect.
 
-### 🔄 Sprint 2 (Tuần 3–4)
+**Gửi file:**
 
-* [ ] Implement chat realtime
-* [ ] Implement broadcast messaging
-* [ ] Tích hợp trao đổi key và mã hóa Fernet vào luồng gửi/nhận
-* [ ] Multi-thread networking
-* [ ] Xử lý exception và kết nối
+Chọn peer đã connect → nhấn "Send File" ở panel bên phải → chọn file → bên nhận sẽ thấy thông báo trong chat, nhấn Download để nhận.
+
+**TOFU — xác minh danh tính:**
+
+Lần đầu gặp peer mới sẽ có hộp thoại hỏi có trust không. Nếu fingerprint của peer thay đổi so với lần trước thì app cảnh báo (có thể là MITM), user tự quyết định chấp nhận hay block.
 
 ---
 
-### ⏳ Sprint 3 (Tuần 5–6)
+## Kiến trúc
 
-* [ ] Hoàn thiện GUI
-* [ ] Theo dõi trạng thái và thống kê peer
-* [ ] Logging lịch sử chat
-* [ ] Thử nghiệm nhiều peer kết nối
+```
+GUI (CustomTkinter)
+  └── ChatApp / MainWindow / Sidebar / ChatBox / PeerDetails
+        │
+        │  (callbacks)
+        ▼
+  ChatController  ←→  P2PNode (TCP server, handshake, sessions)
+                  ←→  Discovery (UDP broadcast)
+                  ←→  TransferManager (file state machine)
+                        │
+                   Security & Storage
+                   RSA · Fernet · JWT · TOFU · MessageHistory
+```
 
----
+**TCP framing:** TCP là stream, không có ranh giới message. Giải pháp: 4 byte đầu mỗi message chứa độ dài payload (big-endian uint32), phần sau là JSON.
 
-### ⏳ Sprint 4 (Tuần 7–8)
+**Handshake 3 bước:**
 
-* [ ] Tối ưu hiệu suất
-* [ ] Stress test và performance test
-* [ ] Hoàn thiện tài liệu
-* [ ] Fix bug lần cuối
+1. Peer A gửi `HELLO` kèm public key
+2. Peer B trả `HELLO_ACK` kèm public key của B và session key đã mã hóa bằng key của A
+3. Peer A giải mã lấy session key, gửi `SESSION_READY`
 
----
+Từ đó hai bên dùng session key (Fernet) để mã hóa mọi thứ.
 
-## 📦 Requirements
+**UDP Discovery:** Mỗi 5 giây broadcast JWT lên port 15000, JWT chứa peer_id, username, IP, port. Peer khác nhận được thì verify JWT và cập nhật danh sách.
 
-```txt
-Python 3.13+
-cryptography
-customtkinter
+**File transfer:**
+
+```
+Sender gửi FILE_META
+  → Receiver thấy, user click Download
+  → Receiver gửi DOWNLOAD_REQUEST
+  → Sender gửi FILE_START, rồi FILE_CHUNK liên tục, cuối là FILE_COMPLETE + sha256
+  → Receiver verify sha256, đổi tên file .part thành tên thật
 ```
 
 ---
 
-## 👥 Thành viên nhóm
+## Cấu trúc thư mục
 
-| MSSV         | Họ tên               |
-| ------------ | -------------------- |
-| 089205009200 | Trần Hữu Tài         |
-| 052206013184 | Nguyễn Văn Tài       |
-| 080306012851 | Trần Thị Thanh Thơ   |
-| 052206003938 | Nguyễn Phan Hoài Bin |
-| 082206002652 | Lê Quốc Thịnh        |
-| 064206008244 | Nguyễn Xuân Thủy     |
+```
+src/
+├── main.py
+├── config.py                  # tất cả constants
+├── gui/
+│   ├── app.py                 # root, wire callbacks
+│   ├── main_window.py         # layout 3 cột
+│   ├── sidebar.py
+│   ├── chatbox.py
+│   ├── chat_bubble.py
+│   ├── peer_details.py
+│   ├── transfer_panel.py
+│   ├── trust_dialog.py        # TOFU dialog
+│   ├── statusbar.py
+│   ├── theme.py               # màu sắc, fonts
+│   └── ui_state.py
+├── network/
+│   ├── node.py                # TCP server + handshake (1054 dòng, intentional)
+│   ├── discovery.py
+│   ├── transfer_manager.py
+│   └── validation.py
+├── controllers/
+│   └── controller.py          # adapter GUI ↔ Node
+├── message/
+│   └── protocol.py            # 4-byte framing + 11 packet types
+├── identity/
+│   └── identity_manager.py    # RSA keypair, peer_id = SHA256(pubkey)
+├── trust/
+│   ├── tofu_engine.py         # NEW→TRUSTED/VERIFIED/MISMATCH/BLOCKED
+│   └── trust_store.py
+├── security/
+│   ├── rsa_utils.py
+│   ├── crypto.py              # Fernet session encryption
+│   └── jwt_handler.py
+├── storage/
+│   ├── contact_book.py
+│   ├── message_history.py     # thread-safe với Lock
+│   └── storage_manager.py     # atomic write
+├── downloads/
+└── test/                      # 187 unit tests
+```
 
 ---
 
-## 📄 Ghi chú
+## Test
 
-> Project hiện đang trong giai đoạn khởi tạo và thiết kế hệ thống.
-> Các chức năng sẽ được triển khai theo từng sprint.
+```bash
+cd Code/P2PChat/src
+python -m pytest test/ --ignore=test/test_statusbar.py -q
+# 187 passed
+```

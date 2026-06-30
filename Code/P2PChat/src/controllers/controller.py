@@ -21,7 +21,7 @@ class ChatController:
 
     Key design decision: the GUI works with **peer_id** (SHA-256 hash) for
     display and selection, but all networking calls (send_message, connect)
-    use **tcp_address** (``"IP:PORT"``). This controller translates between them.
+    use **tcp_address** ("IP:PORT"). This controller translates between them.
     """
 
     def __init__(
@@ -47,11 +47,11 @@ class ChatController:
             on_disconnect: Called with tcp_addr when a peer disconnects.
             on_peers_update: Called (no args) whenever the peer list changes.
             on_peer_discovered: Called with (peer_id, info) on discovery events.
-            on_transfer_started: ``(tid, filename, peer_name, direction)`` callback.
-            on_transfer_progress: ``(tid, fraction)`` progress callback.
-            on_transfer_complete: ``(tid, success, message)`` callback.
-            on_file_meta: ``(meta, peer_name)`` when a FILE_META is received.
-            schedule_gui: ``fn → None`` scheduler that runs *fn* on the Tk thread.
+            on_transfer_started: (tid, filename, peer_name, direction) callback.
+            on_transfer_progress: (tid, fraction) progress callback.
+            on_transfer_complete: (tid, success, message) callback.
+            on_file_meta: (meta, peer_name) when a FILE_META is received.
+            schedule_gui: fn → None scheduler that runs *fn* on the Tk thread.
         """
         self.on_system          = on_system
         self.on_message         = on_message
@@ -92,12 +92,12 @@ class ChatController:
         """Start the P2PNode and bind to *host*:*port*.
 
         Args:
-            host: Bind address (e.g. ``"0.0.0.0"``).
+            host: Bind address (e.g. "0.0.0.0").
             port: TCP listen port.
             username: Display name broadcast to other peers.
 
         Returns:
-            ``(True, info_message)`` on success, ``(False, error_message)`` otherwise.
+            (True, info_message) on success, (False, error_message) otherwise.
         """
         if self.node is not None:
             return False, "Node already started."
@@ -210,7 +210,7 @@ class ChatController:
             payload: Plaintext message body.
 
         Returns:
-            ``(sent_count, failed_count)`` tuple.
+            (sent_count, failed_count) tuple.
         """
         if self.node is None:
             self.on_system("Start the node first.")
@@ -227,7 +227,7 @@ class ChatController:
             peer_id: SHA-256 identifier of the destination peer.
 
         Returns:
-            ``(True, transfer_id)`` or ``(False, error_message)``.
+            (True, transfer_id) or (False, error_message).
         """
         if self.transfer_manager is None:
             return False, "Node not started."
@@ -367,7 +367,7 @@ class ChatController:
 
         Args:
             peer_id: SHA-256 peer identifier.
-            tcp_addr: ``"IP:PORT"`` TCP address string.
+            tcp_addr: "IP:PORT" TCP address string.
         """
         with self._map_lock:
             self._peer_to_tcp[peer_id]  = tcp_addr
@@ -401,12 +401,19 @@ class ChatController:
                 if active:
                     self.register_peer_tcp(peer_id, active)
                     return active
-            return info.get("tcp_address")
+            # Only return the stored tcp_address if the peer is still
+            # marked connected — otherwise it's stale from a previous session.
+            if info.get("connected"):
+                return info.get("tcp_address")
         return None
 
     def _tcp_to_peer_id(self, tcp_addr: str) -> Optional[str]:
         with self._map_lock:
             return self._tcp_to_peer.get(tcp_addr)
+
+    def set_current_peer(self, peer_id: Optional[str]) -> None:
+        """Set the currently-selected peer (called by GUI when user clicks a peer)."""
+        self._current_peer_id = peer_id
 
     def get_peer_id_for_tcp(self, tcp_addr: str) -> Optional[str]:
         """Return the peer_id registered for *tcp_addr*, or None.
@@ -415,7 +422,7 @@ class ChatController:
         disconnect events, avoiding direct access to the internal mapping.
 
         Args:
-            tcp_addr: ``"IP:PORT"`` TCP address string.
+            tcp_addr: "IP:PORT" TCP address string.
 
         Returns:
             SHA-256 peer identifier, or None if not registered.
@@ -462,6 +469,8 @@ class ChatController:
             peer_id = self._tcp_to_peer.pop(tcp_addr, None)
             if peer_id:
                 self._peer_to_tcp.pop(peer_id, None)
+        if self.transfer_manager:
+            self.transfer_manager.cleanup_peer(tcp_addr)
         self._safe_fire(self.on_disconnect, tcp_addr)
         self._safe_fire(self.on_peers_update)
 
