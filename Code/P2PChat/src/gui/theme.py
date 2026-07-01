@@ -35,6 +35,9 @@ TEXT_SEC    = "#464554"   # on-surface-variant — secondary text
 TEXT_MUTED  = "#767586"   # outline — muted / placeholder
 TEXT_TIME   = "#767586"   # timestamps (same as muted)
 TEXT_LINK   = "#4648d4"   # primary — links / accent labels
+TEXT_ON_ACCENT = "#a5b4fc"   # muted captions/timestamps on dark indigo surfaces
+                              # (sent bubbles, sent-file cards) — needs more
+                              # contrast against BG_BUBBLE_ME than TEXT_MUTED gives
 
 # ── Accents — Lumina primary palette ──────────────────────────────────────
 ACCENT      = "#4648d4"   # primary

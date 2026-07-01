@@ -19,9 +19,14 @@ class TOFUEngine:
     stored + fp mismatch  → return MISMATCH (no auto-update; user must accept)
     """
 
-    def __init__(self) -> None:
-        """Initialise the engine with a fresh TrustStore."""
-        self.store = TrustStore()
+    def __init__(self, profile: str = "known_peers") -> None:
+        """Initialise the engine with a fresh TrustStore.
+
+        Args:
+            profile: Forwarded to TrustStore — see its docstring for why a
+                per-port value matters when testing multiple local instances.
+        """
+        self.store = TrustStore(profile=profile)
 
     # ------------------------------------------------------------------ #
     # Core API                                                             #

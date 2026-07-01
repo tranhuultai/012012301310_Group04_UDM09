@@ -55,7 +55,7 @@ class TransferPanel(ctk.CTkFrame):
         self._send_btn = ctk.CTkButton(
             self, text="📎  Send File",
             height=38, corner_radius=10,
-            fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
+            fg_color=T.ACCENT_DIM, hover_color=T.ACCENT_GLOW,
             text_color=T.TEXT_LINK, font=(T.FONT, 12, "bold"),
             command=self._pick_and_send,
         )
@@ -126,7 +126,7 @@ class TransferPanel(ctk.CTkFrame):
 
         ctk.CTkButton(
             row, text="✕", width=24, height=24, corner_radius=12,
-            fg_color=T.DANGER_DIM, hover_color="#7f1d1d",
+            fg_color=T.DANGER_DIM, hover_color=T.BTN_DANGER_HOV,
             text_color=T.DANGER, font=(T.FONT, 11),
             command=lambda tid=transfer_id: self._cancel(tid),
         ).pack(side="right")

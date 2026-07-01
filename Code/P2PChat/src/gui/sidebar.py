@@ -51,129 +51,206 @@ class PeerCard(ctk.CTkFrame):
         self._on_select  = on_select
         self._on_connect = on_connect
         self._selected   = False
+        # Tracks the widget currently occupying the action slot (top-right
+        # of the name row) and its kind ("pill" / "live" / "connect"). Only
+        # rebuilt when the kind changes; see _refresh_action.
+        self._action_kind: str | None = None
+        self._action_widget = None
+        self._pill_lbl = None   # only set (and read) while _action_kind == "pill"
         self.pack_propagate(False)
         self._build()
+        self._refresh()
         self.bind("<Enter>", lambda _e: self._hover(True))
         self.bind("<Leave>", lambda _e: self._hover(False))
 
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        """Pack-only layout — no grid to avoid child overflow past card height."""
-        for w in self.winfo_children():
-            w.destroy()
-
-        info      = self.peer_info
-        username  = info.get("username") or "Unknown"
-        status    = info.get("status", "offline")
-        trust     = info.get("trust_state", TrustState.NEW) or ""
-        connected = bool(info.get("connected"))
-        ip        = info.get("ip", "")
-        port_num  = int(info.get("port") or 0)
-        last_seen = float(info.get("last_seen") or 0)
-        unread    = int(info.get("unread") or 0)
-
-        dot_col  = T.STATUS_DOT.get("connected" if connected else status,
-                                    T.STATUS_DOT["offline"])
-        av_col   = T.avatar_color(username)
-        trust_fg = T.TRUST_FG.get(trust, T.TEXT_MUTED)
-        trust_bg = T.TRUST_BG.get(trust, T.BG_CARD)
+        """Create the card's widget tree once. Never called again after
+        __init__ — updates go through _refresh()/configure() instead, so
+        the card doesn't flicker (destroy+recreate) on every peer-status
+        change (discovery heartbeats fire this every ~5s per peer).
+        """
+        # Slim accent bar on the left edge — placed only while selected (see
+        # set_selected), a fixed T.ACCENT color. Gives the selected state a
+        # clearer signal than the background tint alone, matching the
+        # left-accent pattern used for the active item in Slack/Discord.
+        self._accent = ctk.CTkFrame(self, width=3, fg_color=T.ACCENT,
+                                    corner_radius=0)
+        # Not placed here — place()/place_forget() in set_selected toggles
+        # visibility directly, so there's no "blend into the background"
+        # color to keep synced with hover/idle state.
 
         # ── Outer horizontal row ──────────────────────────────────────
         row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="both", expand=True, padx=10, pady=8)
+        row.pack(fill="both", expand=True, padx=12, pady=10)
 
         # ── Avatar (left, fixed 50×50) ────────────────────────────────
         av_wrap = ctk.CTkFrame(row, fg_color="transparent", width=50, height=50)
-        av_wrap.pack(side="left", padx=(0, 8), pady=7)
+        av_wrap.pack(side="left", padx=(0, 10), pady=7)
         av_wrap.pack_propagate(False)
 
-        av = ctk.CTkFrame(av_wrap, width=44, height=44,
-                          corner_radius=22, fg_color=av_col)
-        av.pack(expand=True)
-        av.pack_propagate(False)
-        ctk.CTkLabel(av, text=username[0].upper(),
-                     font=("Segoe UI", 15, "bold"), text_color="#fff",
-                     ).place(relx=0.5, rely=0.5, anchor="center")
+        # Avatar color/initial only depend on username, which is fixed for
+        # this card's lifetime (a username change means a different peer_id,
+        # i.e. a different card) — set once here rather than recomputing
+        # and reconfiguring on every _refresh() (every ~5s heartbeat).
+        username = self.peer_info.get("username") or "Unknown"
+        self._av = ctk.CTkFrame(av_wrap, width=44, height=44, corner_radius=22,
+                                fg_color=T.avatar_color(username))
+        self._av.pack(expand=True)
+        self._av.pack_propagate(False)
+        self._av_lbl = ctk.CTkLabel(self._av, text=username[0].upper(),
+                     font=("Segoe UI", 15, "bold"), text_color="#fff")
+        self._av_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Status dot — placed at bottom-right of av_wrap
-        dot = ctk.CTkFrame(av_wrap, width=13, height=13, corner_radius=7,
-                           fg_color=dot_col, border_width=2,
-                           border_color=T.BG_CARD)
-        dot.place(relx=1.0, rely=1.0, x=-1, y=-1, anchor="se")
+        # Status dot — placed at bottom-right of av_wrap, overlapping the
+        # avatar's circular edge. It's created after (and lifted above) the
+        # avatar so its full border ring stacks on top and isn't partially
+        # covered by the avatar underneath — without the explicit .lift(),
+        # the upper-left of the ring (the part overlapping the avatar's
+        # disc) rendered as if clipped by the avatar.
+        self._dot = ctk.CTkFrame(av_wrap, width=14, height=14, corner_radius=7,
+                           border_width=2, border_color=T.BG_CARD)
+        self._dot.place(relx=1.0, rely=1.0, x=-1, y=-1, anchor="se")
+        self._dot.lift()
 
         # ── Text (right, flex) ────────────────────────────────────────
         txt = ctk.CTkFrame(row, fg_color="transparent")
         txt.pack(side="left", fill="both", expand=True)
 
         # Row 1: name (left) + action (right)
-        name_row = ctk.CTkFrame(txt, fg_color="transparent")
-        name_row.pack(fill="x")
+        self._name_row = ctk.CTkFrame(txt, fg_color="transparent")
+        self._name_row.pack(fill="x")
 
-        disp = username[:16] + ("…" if len(username) > 16 else "")
-        ctk.CTkLabel(name_row, text=disp, anchor="w",
-                     font=("Segoe UI", 12, "bold"), text_color=T.TEXT_PRI,
-                     ).pack(side="left")
-
-        if unread > 0:
-            pill = ctk.CTkFrame(name_row, width=22, height=22,
-                                corner_radius=11, fg_color=T.ACCENT)
-            pill.pack(side="right")
-            pill.pack_propagate(False)
-            ctk.CTkLabel(pill,
-                         text=str(unread) if unread < 10 else "9+",
-                         font=("Segoe UI", 9, "bold"), text_color="#fff",
-                         ).place(relx=0.5, rely=0.5, anchor="center")
-        elif connected:
-            ctk.CTkLabel(name_row, text="● live",
-                         font=("Segoe UI", 9, "bold"), text_color=T.ACCENT,
-                         ).pack(side="right")
-        else:
-            ctk.CTkButton(
-                name_row, text="Connect", width=58, height=22,
-                corner_radius=11,
-                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
-                text_color=T.TEXT_LINK, font=("Segoe UI", 9),
-                command=self._do_connect,
-            ).pack(side="right")
+        self._name_lbl = ctk.CTkLabel(self._name_row, text="", anchor="w",
+                     font=("Segoe UI", 13, "bold"), text_color=T.TEXT_PRI)
+        self._name_lbl.pack(side="left")
+        # Action slot (pill / "live" / Connect button) is populated by
+        # _refresh_action() — nothing packed here yet.
 
         # Row 2: last message preview (or IP:port / last-seen as fallback)
-        last_msg  = info.get("last_message", "")
-        last_time = info.get("last_message_time", "")
-        if last_msg:
-            sub      = last_msg
-            sub_font = (T.FONT, 10)
-        elif ip and port_num:
-            sub      = f"{ip}:{port_num}"
-            sub_font = ("Consolas", 9)
-        elif last_seen:
-            sub      = _time_ago(last_seen)
-            sub_font = (T.FONT, 10)
-        else:
-            sub      = "Scanning…"
-            sub_font = (T.FONT, 10)
-
+        # A little top padding separates it from the name row above —
+        # previously packed with zero gap, which read as visually cramped.
         sub_row = ctk.CTkFrame(txt, fg_color="transparent")
-        sub_row.pack(fill="x")
-        ctk.CTkLabel(sub_row, text=sub, anchor="w",
-                     font=sub_font, text_color=T.TEXT_MUTED,
-                     ).pack(side="left", fill="x", expand=True)
-        if last_time:
-            ctk.CTkLabel(sub_row, text=last_time,
-                         font=(T.FONT, 9), text_color=T.TEXT_MUTED,
-                         ).pack(side="right")
+        sub_row.pack(fill="x", pady=(3, 0))
+        self._sub_lbl = ctk.CTkLabel(sub_row, text="", anchor="w",
+                     font=(T.FONT, 10), text_color=T.TEXT_MUTED)
+        self._sub_lbl.pack(side="left", fill="x", expand=True)
+        self._time_lbl = ctk.CTkLabel(sub_row, text="",
+                     font=(T.FONT, 9), text_color=T.TEXT_MUTED)
+        # Packed/unpacked on demand in _refresh() depending on last_time.
 
-        # Row 3: trust badge
-        badge = ctk.CTkFrame(txt, corner_radius=5, fg_color=trust_bg)
-        badge.pack(anchor="w", pady=(3, 0))
-        ctk.CTkLabel(badge, text=_TRUST_LABELS.get(trust, trust),
-                     font=("Segoe UI", 9, "bold"), text_color=trust_fg,
-                     ).pack(padx=6, pady=2)
+        # Row 3: trust badge — wider padding + more rounding turns this
+        # into a proper chip/pill shape instead of a label with a faint
+        # background tint, so it reads as a status badge at a glance.
+        self._badge = ctk.CTkFrame(txt, corner_radius=8)
+        self._badge.pack(anchor="w", pady=(6, 0))
+        self._badge_lbl = ctk.CTkLabel(self._badge, text="",
+                     font=("Segoe UI", 9, "bold"))
+        self._badge_lbl.pack(padx=9, pady=3)
 
-        # Propagate click & hover to all children
+        # Bind click on every static child so the whole card is clickable,
+        # not just whichever small gap isn't covered by a label/frame — Tk
+        # delivers <Button-1> to the topmost leaf widget under the cursor,
+        # it does not bubble up to the parent on its own. Runs once here
+        # (build-time only); the action slot (pill/live/connect, built later
+        # by _refresh_action) binds itself separately when created.
         for w in self.winfo_children():
             self._bind_click(w)
         self.bind("<Button-1>", self._do_select)
+
+    def _refresh(self) -> None:
+        """Update all dynamic widgets in place from self.peer_info.
+
+        No widget is destroyed/recreated here except the action slot when
+        its *kind* actually changes (pill/live/connect) — everything else
+        is a plain .configure() call, which is what keeps peer-status
+        updates (discovery heartbeats) from flickering the whole card.
+        """
+        info      = self.peer_info
+        username  = info.get("username") or "Unknown"
+        status    = info.get("status", "offline")
+        trust     = info.get("trust_state", TrustState.NEW) or ""
+        connected = bool(info.get("connected"))
+        unread    = int(info.get("unread") or 0)
+        ip        = info.get("ip", "")
+        port_num  = int(info.get("port") or 0)
+        last_seen = float(info.get("last_seen") or 0)
+
+        dot_col  = T.STATUS_DOT.get("connected" if connected else status,
+                                    T.STATUS_DOT["offline"])
+        trust_fg = T.TRUST_FG.get(trust, T.TEXT_MUTED)
+        trust_bg = T.TRUST_BG.get(trust, T.BG_CARD)
+
+        self._dot.configure(fg_color=dot_col)
+
+        disp = username[:16] + ("…" if len(username) > 16 else "")
+        self._name_lbl.configure(text=disp)
+
+        self._refresh_action(unread, connected)
+
+        last_msg  = info.get("last_message", "")
+        last_time = info.get("last_message_time", "")
+        if last_msg:
+            sub, sub_font = last_msg, (T.FONT, 10)
+        elif ip and port_num:
+            sub, sub_font = f"{ip}:{port_num}", ("Consolas", 9)
+        elif last_seen:
+            sub, sub_font = _time_ago(last_seen), (T.FONT, 10)
+        else:
+            sub, sub_font = "Scanning…", (T.FONT, 10)
+        self._sub_lbl.configure(text=sub, font=sub_font)
+
+        if last_time:
+            self._time_lbl.configure(text=last_time)
+            self._time_lbl.pack(side="right")   # pack() on an already-packed widget is a no-op
+        else:
+            self._time_lbl.pack_forget()
+
+        self._badge.configure(fg_color=trust_bg)
+        self._badge_lbl.configure(text=_TRUST_LABELS.get(trust, trust),
+                                   text_color=trust_fg)
+
+    def _refresh_action(self, unread: int, connected: bool) -> None:
+        """Rebuild only the action slot (top-right of the name row), and
+        only when its *kind* changes — unread count going 1→2 just updates
+        the pill's label text, it doesn't recreate the pill.
+        """
+        kind = "pill" if unread > 0 else ("live" if connected else "connect")
+
+        if kind != self._action_kind:
+            if self._action_widget is not None:
+                self._action_widget.destroy()
+            if kind == "pill":
+                pill = ctk.CTkFrame(self._name_row, width=22, height=22,
+                                    corner_radius=11, fg_color=T.ACCENT)
+                pill.pack(side="right")
+                pill.pack_propagate(False)
+                self._pill_lbl = ctk.CTkLabel(
+                    pill, text="", font=("Segoe UI", 9, "bold"), text_color="#fff")
+                self._pill_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                self._bind_click(pill)
+                self._action_widget = pill
+            elif kind == "live":
+                live_lbl = ctk.CTkLabel(self._name_row, text="● live",
+                             font=("Segoe UI", 9, "bold"), text_color=T.ACCENT)
+                live_lbl.pack(side="right")
+                self._bind_click(live_lbl)
+                self._action_widget = live_lbl
+            else:
+                btn = ctk.CTkButton(
+                    self._name_row, text="Connect", width=58, height=22,
+                    corner_radius=11,
+                    fg_color=T.ACCENT_DIM, hover_color=T.ACCENT_GLOW,
+                    text_color=T.TEXT_LINK, font=("Segoe UI", 9),
+                    command=self._do_connect,
+                )
+                btn.pack(side="right")
+                self._action_widget = btn
+            self._action_kind = kind
+
+        if kind == "pill" and self._pill_lbl is not None:
+            self._pill_lbl.configure(text=str(unread) if unread < 10 else "9+")
 
     def _bind_click(self, widget) -> None:
         widget.bind("<Button-1>", self._do_select)
@@ -195,14 +272,19 @@ class PeerCard(ctk.CTkFrame):
             self._on_connect(self.peer_id, self.peer_info)
 
     def set_selected(self, sel: bool) -> None:
-        """Highlight or un-highlight."""
+        """Highlight or un-highlight, including the left accent bar."""
         self._selected = sel
         self.configure(fg_color=T.BG_CARD_SEL if sel else T.BG_CARD)
+        if sel:
+            self._accent.place(relx=0, rely=0, relheight=1)
+        else:
+            self._accent.place_forget()
 
     def update_info(self, peer_info: dict) -> None:
-        """Refresh contents in-place."""
+        """Refresh contents in-place — no widgets destroyed/recreated
+        (aside from the action slot when its kind changes; see _refresh)."""
         self.peer_info = peer_info
-        self._build()
+        self._refresh()
         if self._selected:
             self.configure(fg_color=T.BG_CARD_SEL)
 
@@ -334,7 +416,16 @@ class Sidebar(ctk.CTkFrame):
     def update_peers(self, peers: dict) -> None:
         """Incremental peer list update — avoids full rebuild on heartbeat."""
         prev = set(self._all_peers)
-        self._all_peers = peers
+        # Copy, don't alias: *peers* is app.py's ui_state.discovered_peers,
+        # which gets mutated in place (new peers added) the instant they're
+        # discovered — before the throttled redraw that calls this even
+        # fires. Aliasing it here meant next call's `prev` snapshot was
+        # already the *new* state too, so prev == curr looked true and a
+        # newly-discovered peer's card was silently never created (only the
+        # header count, computed fresh from dict size, showed the real
+        # total). Values are shared on purpose — only the key set needs its
+        # own identity for this comparison to mean anything.
+        self._all_peers = dict(peers)
         curr = set(peers)
 
         for pid in prev - curr:

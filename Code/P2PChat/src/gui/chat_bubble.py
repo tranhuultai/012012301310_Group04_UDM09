@@ -1,94 +1,190 @@
-"""Chat bubbles — responsive, Lumina-inspired message rendering.
+"""Chat bubble drawing — direct Canvas rendering (rounded-rect + text items).
 
 Design decisions:
-    - add_chat_bubble returns the message label so ChatBox can track
-      it for wraplength updates on window resize (CRITICAL for correctness).
-    - Wraplength is passed in, not hardcoded, so resize events can update
-      all existing bubbles uniformly.
-    - Sent bubbles align right with anchor="e"; received align left.
-    - Both sides have a timestamp footer — intentional per the Lumina spec.
+    - Bubbles are raw Tk Canvas items (polygon + text), not CTk widgets.
+      Every CTkFrame/CTkLabel independently redraws itself on <Configure>
+      (confirmed by reading customtkinter's own source) — with one CTkFrame
+      subtree per chat message, a resize drag or message flood triggered a
+      redraw cascade across hundreds of live widgets, causing the black
+      flicker/tearing this file replaces. Canvas items have no window
+      handle and no <Configure> binding of their own, so that cascade
+      cannot happen.
+    - Each draw function returns the total height consumed (including its
+      own top gap) so the caller (ChatBox._do_relayout) can advance its
+      y-cursor. Height comes from canvas.bbox() on the actual rendered text
+      item — never hand-rolled font-metrics math.
+    - ``grouped`` (consecutive messages from the same sender) tightens the
+      gap above the bubble and, for received messages, hides the repeated
+      sender name — the standard grouping convention in Telegram/Discord/
+      Messenger, so a burst of messages from one person doesn't visually
+      repeat their name and doesn't get separated as if from someone new.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
-
-import customtkinter as ctk
 
 from gui import theme as T
+
+# Vertical gap above a row: tight within a same-sender group, wider when a
+# new sender starts (or after a system message/divider breaks the group).
+_GAP_GROUPED = 2
+_GAP_NEW_GROUP = 10
+
+_BUBBLE_RADIUS = 18
+_BUBBLE_SIDE_MARGIN = 16   # gutter kept clear on the "own side" of a bubble
+_BUBBLE_OPP_MARGIN = 72    # wider gutter on the opposite side (room to breathe)
 
 
 def _now() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-def add_chat_bubble(
-    parent,
-    message: str,
-    sender: str = "me",
-    is_me: bool = False,
-    wraplength: int = 400,
-) -> Optional[ctk.CTkLabel]:
-    """Append one message bubble to *parent* and return the message label.
+def _round_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
+    """Draw a rounded rectangle as a smoothed polygon. Returns the item id.
 
-    The caller should store the returned label in a list so that
-    wraplength can be updated later when the chat column resizes.
-    Returns None only if an unexpected error occurs.
+    Standard Tkinter recipe: a fixed 12-point corner list fed to
+    create_polygon(smooth=True) — no bezier math, no images needed.
+    """
+    r = radius
+    points = [
+        x1 + r, y1,       x2 - r, y1,      x2, y1,      x2, y1 + r,
+        x2, y2 - r,       x2, y2,          x2 - r, y2,  x1 + r, y2,
+        x1, y2,           x1, y2 - r,      x1, y1 + r,  x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
+def draw_bubble(canvas, top_y: int, canvas_width: int, wraplength: int,
+                 message: str, sender: str, is_me: bool, grouped: bool,
+                 tag: str) -> int:
+    """Draw one message bubble at *top_y* and return its total height.
 
     Args:
-        parent: A CTkScrollableFrame (or any CTk container using pack).
-        message: Plaintext message body.
-        sender: Display name (shown on received bubbles).
-        is_me: True → right-aligned indigo bubble; False → left-aligned card.
-        wraplength: Initial wrap width in pixels — caller updates on resize.
+        canvas: Target tkinter.Canvas.
+        top_y: Y-coordinate of the row's top edge.
+        canvas_width: Current visible canvas width (for alignment).
+        wraplength: Max text width in pixels before wrapping.
+        message: Plaintext body.
+        sender: Display name (shown on received bubbles, first-of-group only).
+        is_me: True -> right-aligned indigo bubble; False -> left-aligned card.
+        grouped: True if this message immediately follows another from the
+            same sender (see module docstring).
+        tag: Unique canvas tag for this row (eviction deletes by this tag).
+
+    Returns:
+        Total pixel height this row occupies, including its top gap.
     """
     ts = _now()
+    top_gap = _GAP_GROUPED if grouped else _GAP_NEW_GROUP
+    y = top_y + top_gap
 
-    outer = ctk.CTkFrame(parent, fg_color="transparent")
-    outer.pack(fill="x", padx=16, pady=(2, 2))
+    # Text items are created at the origin first so their real (wrapped)
+    # size can be measured via bbox — then repositioned once the bubble's
+    # final bounding box is known. Tk's own layout is the source of truth
+    # for wrap/height, not hand-rolled font metrics.
+    name_id = None
+    name_w = 0
+    if not is_me and not grouped:
+        name_id = canvas.create_text(
+            0, 0, text=sender, anchor="nw",
+            fill=T.TEXT_LINK, font=(T.FONT, 10, "bold"), tags=(tag,))
+        nx1, _, nx2, _ = canvas.bbox(name_id)
+        name_w = nx2 - nx1
+
+    # Max width a bubble may occupy, leaving the opposite side's gutter
+    # clear (mirrors the old padx=(72,0)/(0,72) reserved gutter).
+    max_wrap = min(wraplength, canvas_width - _BUBBLE_SIDE_MARGIN - _BUBBLE_OPP_MARGIN - 32)
+    msg_id = canvas.create_text(
+        0, 0, text=message, anchor="nw", justify="left", width=max(max_wrap, 60),
+        fill="#e0e7ff" if is_me else T.TEXT_PRI,
+        font=(T.FONT, 13), tags=(tag,))
+    mx1, my1, mx2, my2 = canvas.bbox(msg_id)
+    msg_w, msg_h = mx2 - mx1, my2 - my1
+
+    footer_text, footer_fill = (
+        (f"{ts}    ✓✓", T.TEXT_ON_ACCENT) if is_me else (ts, T.TEXT_TIME))
+    footer_id = canvas.create_text(
+        0, 0, text=footer_text, anchor="nw",
+        fill=footer_fill, font=(T.FONT, 9), tags=(tag,))
+    fx1, fy1, fx2, fy2 = canvas.bbox(footer_id)
+    footer_w, footer_h = fx2 - fx1, fy2 - fy1
+
+    content_w = max(msg_w, footer_w, name_w)
+    bubble_w = content_w + 32   # 16px padding each side
+    top_pad = 12 if (is_me or grouped) else (10 + (18 if name_id is not None else 0))
+    bubble_h = top_pad + msg_h + 6 + footer_h + 10
 
     if is_me:
-        bubble = ctk.CTkFrame(
-            outer, fg_color=T.BG_BUBBLE_ME, corner_radius=16)
-        bubble.pack(anchor="e", padx=(72, 0))
-
-        msg_lbl = ctk.CTkLabel(
-            bubble, text=message,
-            justify="left", wraplength=wraplength,
-            text_color="#e0e7ff",
-            font=(T.FONT, 13),
-        )
-        msg_lbl.pack(anchor="w", padx=(14, 14), pady=(10, 4))
-
-        ctk.CTkLabel(
-            bubble, text=f"{ts}  ✓✓",
-            text_color="#6366f1",
-            font=(T.FONT, 9),
-        ).pack(anchor="e", padx=(14, 12), pady=(0, 8))
-
+        bx2 = canvas_width - _BUBBLE_SIDE_MARGIN
+        bx1 = bx2 - bubble_w
     else:
-        bubble = ctk.CTkFrame(
-            outer, fg_color=T.BG_BUBBLE_IN, corner_radius=16)
-        bubble.pack(anchor="w", padx=(0, 72))
+        bx1 = _BUBBLE_SIDE_MARGIN
+        bx2 = bx1 + bubble_w
+    by1, by2 = y, y + bubble_h
 
-        ctk.CTkLabel(
-            bubble, text=sender, anchor="w",
-            text_color=T.TEXT_LINK,
-            font=(T.FONT, 10, "bold"),
-        ).pack(anchor="w", padx=14, pady=(10, 0))
+    rect_fill = T.BG_BUBBLE_ME if is_me else T.BG_BUBBLE_IN
+    _round_rect(canvas, bx1, by1, bx2, by2, _BUBBLE_RADIUS,
+                fill=rect_fill, outline="", tags=(tag,))
 
-        msg_lbl = ctk.CTkLabel(
-            bubble, text=message,
-            justify="left", wraplength=wraplength,
-            text_color=T.TEXT_PRI,
-            font=(T.FONT, 13),
-        )
-        msg_lbl.pack(anchor="w", padx=14, pady=(2, 4))
+    # Reposition text on top of the just-drawn rect (draw order alone put
+    # the rect above the text; tag_raise fixes the stacking).
+    if name_id is not None:
+        canvas.coords(name_id, bx1 + 16, by1 + 10)
+        canvas.tag_raise(name_id)
+    canvas.coords(msg_id, bx1 + 16, by1 + top_pad)
+    canvas.tag_raise(msg_id)
+    canvas.coords(footer_id, bx2 - 14 - footer_w, by2 - 10 - footer_h)
+    canvas.tag_raise(footer_id)
 
-        ctk.CTkLabel(
-            bubble, text=ts,
-            text_color=T.TEXT_TIME,
-            font=(T.FONT, 9),
-        ).pack(anchor="e", padx=12, pady=(0, 8))
+    return by2 - top_y
 
-    return msg_lbl
+
+def draw_system(canvas, top_y: int, canvas_width: int, text: str, tag: str) -> int:
+    """Draw a centred system notice pill (e.g. "Connected"). Returns height."""
+    top_gap = 6
+    label_id = canvas.create_text(
+        0, 0, text=text, anchor="nw",
+        fill=T.TEXT_MUTED, font=(T.FONT, 9), tags=(tag,))
+    lx1, ly1, lx2, ly2 = canvas.bbox(label_id)
+    label_w, label_h = lx2 - lx1, ly2 - ly1
+
+    pad_x, pad_y = 12, 4
+    pill_w, pill_h = label_w + pad_x * 2, label_h + pad_y * 2
+    y = top_y + top_gap
+    cx = canvas_width / 2
+    bx1, bx2 = cx - pill_w / 2, cx + pill_w / 2
+    by1, by2 = y, y + pill_h
+
+    _round_rect(canvas, bx1, by1, bx2, by2, pill_h / 2,
+                fill=T.BG_FIELD, outline="", tags=(tag,))
+    canvas.coords(label_id, bx1 + pad_x, by1 + pad_y)
+    canvas.tag_raise(label_id)
+
+    return by2 - top_y
+
+
+def draw_divider(canvas, top_y: int, canvas_width: int, label: str, tag: str) -> int:
+    """Draw a centred date divider (label chip with rules on each side)."""
+    top_gap = 10
+    label_id = canvas.create_text(
+        0, 0, text=label, anchor="nw",
+        fill=T.TEXT_MUTED, font=(T.FONT, 9), tags=(tag,))
+    lx1, ly1, lx2, ly2 = canvas.bbox(label_id)
+    label_w, label_h = lx2 - lx1, ly2 - ly1
+
+    pad_x, pad_y = 8, 4
+    chip_w, chip_h = label_w + pad_x * 2, label_h + pad_y * 2
+    y = top_y + top_gap
+    line_y = y + chip_h / 2
+    cx = canvas_width / 2
+    bx1, bx2 = cx - chip_w / 2, cx + chip_w / 2
+
+    canvas.create_line(16, line_y, bx1 - 6, line_y, fill=T.BORDER, tags=(tag,))
+    canvas.create_line(bx2 + 6, line_y, canvas_width - 16, line_y,
+                        fill=T.BORDER, tags=(tag,))
+    _round_rect(canvas, bx1, y, bx2, y + chip_h, chip_h / 2,
+                fill=T.BG_FIELD, outline="", tags=(tag,))
+    canvas.coords(label_id, bx1 + pad_x, y + pad_y)
+    canvas.tag_raise(label_id)
+
+    return chip_h + top_gap * 2   # symmetric top/bottom breathing room
