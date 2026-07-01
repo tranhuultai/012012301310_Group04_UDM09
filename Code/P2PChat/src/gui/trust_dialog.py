@@ -5,6 +5,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from gui import theme as T
+from gui.win_compat import enable_layered_window
 
 
 class TrustDialog(ctk.CTkToplevel):
@@ -66,7 +67,13 @@ class TrustDialog(ctk.CTkToplevel):
     def _configure_window(self) -> None:
         """Set window geometry and keep it centred above the parent."""
         self.title("Peer Trust Verification")
-        self.resizable(False, False)
+        # Deferred slightly: calling resizable() in the same tick as window
+        # creation is a known source of an initial white/black flash on
+        # Windows (the OS repaints once for the create, once for the
+        # resizable-flag change) — letting the window finish its first
+        # paint first avoids the double-repaint.
+        self.after(10, lambda: self.resizable(False, False))
+        enable_layered_window(self)
         self.configure(fg_color=T.BG_MAIN)
         self.grid_columnconfigure(0, weight=1)
 

@@ -26,7 +26,7 @@ _TRUST_SHORT: dict[str, str] = {
     "TRUSTED":  "✓ Trusted",
     "VERIFIED": "✔ Verified",
     "MISMATCH": "⚠ Key Changed",
-    "BLOCKED":  "⊘ Blocked",
+    "BLOCKED":  "🚫 Blocked",
 }
 
 
@@ -173,10 +173,15 @@ class MainWindow(ctk.CTkFrame):
         self.send_button.grid(row=0, column=1, padx=(0, 8), pady=12)
 
         if on_broadcast:
+            # Was fg=BG_FIELD/hover=BORDER_LIGHT — both near-white and barely
+            # distinguishable from the input bar background, making the
+            # button look almost invisible. Use the same accent-tint family
+            # as the other icon buttons so it reads clearly as an action.
             ctk.CTkButton(
                 input_bar, text="📢", width=38, height=38, corner_radius=19,
-                fg_color=T.BG_FIELD, hover_color=T.BORDER_LIGHT,
-                font=("Segoe UI Emoji", 13), command=on_broadcast,
+                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT_GLOW,
+                text_color=T.TEXT_LINK,
+                font=("Segoe UI Emoji", 15), command=on_broadcast,
             ).grid(row=0, column=2, padx=(0, 10), pady=13)
 
     def _build_details(self, on_trust, on_block, on_connect,

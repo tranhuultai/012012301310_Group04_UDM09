@@ -85,15 +85,19 @@ class PeerDetails(ctk.CTkFrame):
         _, self._ip_val   = self._row(info_card, "IP",          "—")
         _, self._port_val = self._row(info_card, "Port",        "—")
         _, self._fp_val   = self._row(info_card, "Fingerprint", "—", mono=True, wrap=True)
-        self._trust_row, self._trust_val = self._row(info_card, "Trust", "NEW")
+        self._trust_row, self._trust_val = self._row(info_card, "Trust", "—")
 
         # ── Action buttons ───────────────────────────────────────────
         btn_card = ctk.CTkFrame(self, fg_color="transparent")
         btn_card.pack(fill="x", padx=12, pady=(0, 12))
 
+        # Icons chosen to match widely-recognized equivalents from
+        # Messenger/Zalo/Telegram (link/plug/plus/no-entry) instead of the
+        # previous Unicode Technical-block glyphs (⎋ ⊘ ⭐), which aren't in
+        # the emoji set and render as flat, hard-to-read symbols.
         self._connect_btn = self._btn(
-            btn_card, "⎋  Connect",
-            fg=T.ACCENT_DIM, hover=T.ACCENT, tc=T.TEXT_LINK,
+            btn_card, "🔗  Connect",
+            fg=T.ACCENT_DIM, hover=T.ACCENT_GLOW, tc=T.TEXT_LINK,
             cmd=self._do_connect)
 
         self._trust_btn = self._btn(
@@ -102,13 +106,13 @@ class PeerDetails(ctk.CTkFrame):
             cmd=self._do_trust)
 
         self._contact_btn = self._btn(
-            btn_card, "⭐  Add Contact",
+            btn_card, "➕  Add Contact",
             fg=T.BG_FIELD, hover=T.BG_CARD, tc=T.TEXT_SEC,
             cmd=self._do_add_contact)
 
         self._block_btn = self._btn(
-            btn_card, "⊘  Block Peer",
-            fg=T.DANGER_DIM, hover="#7f1d1d", tc=T.DANGER,
+            btn_card, "🚫  Block Peer",
+            fg=T.DANGER_DIM, hover=T.BTN_DANGER_HOV, tc=T.DANGER,
             cmd=self._do_block)
 
     @staticmethod
@@ -187,36 +191,36 @@ class PeerDetails(ctk.CTkFrame):
         # Connect button doubles as Disconnect when a session is active.
         if connected:
             self._connect_btn.configure(
-                text="⏹  Disconnect", state="normal",
+                text="🔌  Disconnect", state="normal",
                 fg_color=T.DANGER_DIM, hover_color=T.BTN_DANGER_HOV,
                 text_color=T.DANGER)
         else:
             self._connect_btn.configure(
-                text="⎋  Connect", state="normal",
-                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
+                text="🔗  Connect", state="normal",
+                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT_GLOW,
                 text_color=T.TEXT_LINK)
 
         # Trust/Block button states — mutually exclusive actions
         if trust == TrustState.BLOCKED:
             self._trust_btn.configure(
-                text="↩  Unblock Peer",
+                text="🔓  Unblock Peer",
                 fg_color=T.BTN_SUCCESS_BG, text_color=T.SUCCESS)
             self._block_btn.configure(
-                text="⊘  Blocked",
+                text="🚫  Blocked",
                 state="disabled", fg_color=T.BG_FIELD, text_color=T.TEXT_MUTED)
         elif trust == TrustState.MISMATCH:
             self._trust_btn.configure(
                 text="⚠  Accept New Key",
                 fg_color=T.BTN_WARN_BG, text_color=T.WARNING)
             self._block_btn.configure(
-                text="⊘  Block Peer",
+                text="🚫  Block Peer",
                 state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)
         else:
             self._trust_btn.configure(
                 text="✓  Trust / Verify",
                 fg_color=T.BTN_SUCCESS_BG, text_color=T.SUCCESS)
             self._block_btn.configure(
-                text="⊘  Block Peer",
+                text="🚫  Block Peer",
                 state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)
 
     # Compat shims

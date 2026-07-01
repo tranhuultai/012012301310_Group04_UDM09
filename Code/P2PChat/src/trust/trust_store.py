@@ -25,11 +25,28 @@ class TrustStore:
         }
     """
 
-    def __init__(self) -> None:
-        """Initialise and load the trust store from disk."""
+    def __init__(self, profile: str = "known_peers") -> None:
+        """Initialise and load the trust store from disk.
+
+        Args:
+            profile: File stem under data/trust/ — pass a per-port value
+                (e.g. "known_peers_13001") when running multiple local
+                instances from the same working directory, otherwise their
+                writes to the same known_peers.json race each other
+                (observed as "Access is denied" on the .tmp-file rename and
+                a corrupted store on the next load).
+        """
         self._data_dir   = Path("data/trust")
-        self._store_file = self._data_dir / "known_peers.json"
+        self._store_file = self._data_dir / f"{profile}.json"
         self._lock       = threading.RLock()
+        # Serializes the actual disk write across the background threads
+        # _save() spawns. Without this, two saves fired close together (e.g.
+        # discovering/connecting 2+ peers within milliseconds of each other)
+        # race on the same .tmp file — one thread's rename can hit the other
+        # thread's still-open file handle, which Windows rejects with
+        # "Access is denied" / "used by another process", silently dropping
+        # that trust-state update.
+        self._write_lock = threading.Lock()
         self._peers: dict[str, dict] = {}
         self._load()
 
@@ -83,16 +100,17 @@ class TrustStore:
             snapshot: Copy of the peers dict taken while the lock was held.
         """
         tmp = self._store_file.with_suffix(".tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(snapshot, fh, indent=4)
-            tmp.replace(self._store_file)
-        except OSError as exc:
-            logger.error("[TRUST] Failed to save trust store: %s", exc)
+        with self._write_lock:
             try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(snapshot, fh, indent=4)
+                tmp.replace(self._store_file)
+            except OSError as exc:
+                logger.error("[TRUST] Failed to save trust store: %s", exc)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------------ #
     # CRUD                                                                 #
