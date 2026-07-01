@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 import customtkinter as ctk
 
@@ -17,6 +18,7 @@ from controllers.controller import ChatController
 from gui import theme as T
 from gui.main_window import MainWindow
 from gui.ui_state import UIState
+from gui.win_compat import enable_layered_window
 from trust.trust_state import TrustState
 
 configure_logging()
@@ -36,6 +38,7 @@ class ChatApp(ctk.CTk):
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(960, 620)
         self.configure(fg_color=T.BG_APP)
+        enable_layered_window(self)
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -45,6 +48,26 @@ class ChatApp(ctk.CTk):
         self._peers_update_pending = False
         self._closing = False          # guard against double-close
         self._toast_after: str | None = None   # pending after() id for toast
+
+        # Peer IDs with an active TCP session. StatusBar has a single
+        # "connected peer" segment — without tracking the full set, a second
+        # peer connecting silently overwrote the first's name, and *any*
+        # disconnect (even of an already-superseded peer) unconditionally
+        # blanked the segment to "Not connected" even while others stayed
+        # connected. See _update_connection_segment.
+        self._connected_peer_ids: set[str] = set()
+
+        # Inbound-message batching. A spamming peer can fire on_message
+        # dozens of times per second; queuing one after(0, ...) per message
+        # let the Tk event queue balloon and froze the GUI. Instead, messages
+        # are queued here and drained in capped batches (see _drain_messages).
+        # A maxlen deque auto-evicts the oldest message once the backlog hits
+        # cap — same bounded-FIFO convention node.py uses for its seen-message
+        # cache — and append()/popleft() are individually thread-safe in
+        # CPython, so no lock or swap-the-whole-list dance is needed even
+        # though multiple peer-connection threads call _on_message concurrently.
+        self._msg_queue: deque[tuple[str, str, str]] = deque(maxlen=self._MAX_QUEUED_MSGS)
+        self._msg_drain_pending = False
 
         # Per-conversation message log, keyed by peer_id.
         # Each entry is one of:
@@ -107,10 +130,20 @@ class ChatApp(ctk.CTk):
             font=("Segoe UI", 11), padx=16)
         # Not placed until first toast
 
-        # - Start node (in background thread so UI appears immediately) -
+        # ── Start node (in background thread so UI appears immediately) ─
         self._boot_ui()
-        threading.Thread(target=self._start_node_bg,
-                         daemon=True, name="NodeBoot").start()
+        # Deferred via after(0, ...) rather than starting the thread
+        # directly here: this constructor runs *before* main.py calls
+        # mainloop(), so a thread started here can — if binding the socket
+        # and starting discovery happens to finish first — call
+        # self.after() from a background thread before mainloop() has
+        # actually begun. Tk raises "main thread is not in main loop" for
+        # that (a real, timing-dependent crash reproduced in practice, not
+        # a hypothetical). Scheduling the thread's own start via after(0)
+        # guarantees it can't even begin until the event loop is confirmed
+        # running — after(0, ...) called from the main thread before
+        # mainloop() starts is safe and simply fires once it does.
+        self.after(0, self._launch_node_thread)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -121,6 +154,12 @@ class ChatApp(ctk.CTk):
     def _boot_ui(self) -> None:
         """Show the 'starting…' state while the node initialises."""
         self.main_window.set_status("Starting node…", T.WARNING)
+
+    def _launch_node_thread(self) -> None:
+        """Start the node's background thread (see why this is deferred
+        above, where it's scheduled)."""
+        threading.Thread(target=self._start_node_bg,
+                         daemon=True, name="NodeBoot").start()
 
     def _start_node_bg(self) -> None:
         """Start the P2P node in a background thread, then update UI."""
@@ -169,6 +208,15 @@ class ChatApp(ctk.CTk):
     def _on_system(self, message: str) -> None:
         self.after(0, lambda: self.main_window.add_system_message(message))
 
+    # Max messages rendered per drain tick. Keeps each Tk idle callback
+    # short so the mainloop stays responsive even under sustained spam from
+    # several peers; any excess stays queued for the next tick.
+    _MSG_BATCH_SIZE = 25
+
+    # Hard cap on the backlog itself, independent of _MSG_BATCH_SIZE — bounds
+    # memory if inbound rate permanently outpaces the drain rate.
+    _MAX_QUEUED_MSGS = 500
+
     def _on_message(self, peer_id: str, sender: str, payload: str) -> None:
         # Persist received message immediately (happens on the callback thread,
         # before marshalling to Tk — avoids losing messages if the UI thread
@@ -181,23 +229,67 @@ class ChatApp(ctk.CTk):
             "timestamp":  time.time(),
         })
 
-        def _upd() -> None:
-            # Store in that peer's in-memory conversation log.
+        # Enqueue and let the batch drain handle rendering. `deque.append` is
+        # thread-safe on its own (network thread here, Tk thread in
+        # _drain_messages), and maxlen already enforces the backlog cap by
+        # silently dropping the oldest entry — disk history is unaffected,
+        # only how far behind the live GUI catches up is bounded.
+        self._msg_queue.append((peer_id, sender, payload))
+        if not self._msg_drain_pending:
+            self._msg_drain_pending = True
+            self.after(0, self._drain_messages)
+
+    def _drain_messages(self) -> None:
+        """Render up to _MSG_BATCH_SIZE queued messages in one Tk callback.
+
+        Replaces the old one-after()-per-message approach, which let the Tk
+        event queue balloon (and the GUI freeze/tear) whenever several peers
+        spammed messages concurrently.
+        """
+        self._msg_drain_pending = False
+        # popleft() is thread-safe on its own — no need to swap the whole
+        # queue out first, unlike a plain list.
+        batch = []
+        for _ in range(self._MSG_BATCH_SIZE):
+            try:
+                batch.append(self._msg_queue.popleft())
+            except IndexError:
+                break
+        if not batch:
+            return
+
+        now_str = time.strftime("%H:%M")   # batch drains back-to-back; one timestamp for all
+        unread_peers: dict[str, tuple[str, str]] = {}   # peer_id -> (sender, last payload)
+        for peer_id, sender, payload in batch:
             self._conversations.setdefault(peer_id, []).append(("in", sender, payload))
             self._last_preview[peer_id] = (
                 payload[:40] + "…" if len(payload) > 40 else payload,
-                time.strftime("%H:%M"),
+                now_str,
             )
-
             if peer_id == self.selected_peer_id:
                 self.main_window.add_received_message(sender, payload)
             else:
                 self._unread[peer_id] = self._unread.get(peer_id, 0) + 1
+                unread_peers[peer_id] = (sender, payload)
+
+        if unread_peers:
+            self._apply_unread_badges()
+            # One toast summarising the batch, not one per message — avoids
+            # toast spam (and the after()-cancel churn from _toast_show).
+            if len(unread_peers) == 1:
+                (sender, payload), = unread_peers.values()
                 preview = payload[:38] + "…" if len(payload) > 38 else payload
                 self._toast_show(f"💬  {sender}: {preview}")
-                self._apply_unread_badges()
-            self._schedule_peers_redraw()
-        self.after(0, _upd)
+            else:
+                self._toast_show(f"💬  New messages from {len(unread_peers)} peers")
+
+        self._schedule_peers_redraw()
+
+        # More arrived (or was left over) — keep draining without waiting
+        # for a fresh message to re-trigger the loop.
+        if self._msg_queue and not self._msg_drain_pending:
+            self._msg_drain_pending = True
+            self.after(0, self._drain_messages)
 
     def _on_connected(self, peer_id: str, tcp_addr: str) -> None:
         def _upd() -> None:
@@ -212,7 +304,8 @@ class ChatApp(ctk.CTk):
             self.ui_state.discovered_peers[peer_id] = info
             peer_name = info.get("username", tcp_addr)
 
-            self.main_window.status_bar.set_connected_peer(peer_name)
+            self._connected_peer_ids.add(peer_id)
+            self._update_connection_segment()
             self.main_window.set_status(f"Connected: {peer_name}", T.ACCENT)
             self._toast_show(f"🔗 Connected to {peer_name}", T.SUCCESS)
 
@@ -247,14 +340,18 @@ class ChatApp(ctk.CTk):
                     self.ui_state.discovered_peers[pid] = info
                     found_pid = pid
                     break
-            self.main_window.status_bar.set_disconnected()
-            self.main_window.set_status(
-                f"Disconnected: {peer_name}", T.WARNING)
-            self._toast_show(f"🔌 {peer_name} disconnected", T.WARNING)
             # Update header if the disconnected peer is currently selected.
             # resolved_pid may be None (mapping is cleared before this closure
             # runs on the Tk thread), so fall back to the pid found in the loop.
             effective_pid = resolved_pid or found_pid
+            # Only this peer leaves the connected set — other active
+            # sessions must keep showing in the status bar.
+            if effective_pid:
+                self._connected_peer_ids.discard(effective_pid)
+            self._update_connection_segment()
+            self.main_window.set_status(
+                f"Disconnected: {peer_name}", T.WARNING)
+            self._toast_show(f"🔌 {peer_name} disconnected", T.WARNING)
             if self.selected_peer_id and self.selected_peer_id == effective_pid:
                 sel = self.ui_state.discovered_peers.get(
                     self.selected_peer_id, {})
@@ -681,6 +778,23 @@ class ChatApp(ctk.CTk):
     # ------------------------------------------------------------------ #
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
+
+    def _update_connection_segment(self) -> None:
+        """Reflect the current set of connected peers in the status bar.
+
+        StatusBar only has one "connected peer" slot, so with 2+ peers
+        connected at once we can't show every name — fall back to a count.
+        Called after _connected_peer_ids changes (connect/disconnect).
+        """
+        n = len(self._connected_peer_ids)
+        if n == 0:
+            self.main_window.status_bar.set_disconnected()
+        elif n == 1:
+            (pid,) = self._connected_peer_ids
+            name = self.ui_state.discovered_peers.get(pid, {}).get("username", pid[:8])
+            self.main_window.status_bar.set_connected_peer(name)
+        else:
+            self.main_window.status_bar.set_connected_peer(f"{n} peers")
 
     def _refresh_peer_info(self, peer_id: str) -> None:
         info = self.ui_state.discovered_peers.get(peer_id)

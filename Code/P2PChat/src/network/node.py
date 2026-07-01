@@ -20,7 +20,18 @@ from config import SOCKET_TIMEOUT, DEFAULT_LISTEN_PORT
 logger = logging.getLogger(__name__)
 
 HANDSHAKE_TIMEOUT = 10   # seconds before a pending handshake is dropped
-_RECV_TIMEOUT     = 30   # per-socket read timeout (catches stalled peers)
+# Per-socket read timeout on an *active* chat session — the receive loop
+# treats silence longer than this as a dead peer (see _receive_messages).
+# Previously 30s with no heartbeat, so any normal conversational pause
+# (reading, composing a reply) longer than that silently tore the session
+# down mid-chat ("Session ended" with no clear cause) — chat activity was
+# the only thing keeping the timer reset, and real conversations aren't
+# continuous. _send_heartbeats now pings every active session every
+# _PING_INTERVAL seconds regardless of chat activity, so this timeout only
+# ever fires for a genuinely dead peer (a few missed pings in a row), never
+# for one that's simply idle.
+_RECV_TIMEOUT  = 45   # per-socket read timeout (catches stalled peers)
+_PING_INTERVAL = 15   # heartbeat period; comfortably under _RECV_TIMEOUT
 _AddressMap       = dict[int, str]  # id(socket) -> "IP:PORT"
 _SEEN_MSG_MAX     = 4096  # max message IDs in the deque (FIFO eviction)
 
@@ -93,15 +104,24 @@ class P2PNode:
 
         self.protocol_handler = ProtocolHandler()
 
-        # Identity — use a per-port profile so multiple local instances don't
+        # Per-port suffix so multiple local instances (the documented test
+        # workflow: `python main.py`, `python main.py 1000`, ...) don't
+        # collide on shared files. Empty for the default port keeps existing
+        # single-instance file names unchanged.
+        port_suffix = "" if port == DEFAULT_LISTEN_PORT else f"_{port}"
+
+        # Identity — per-port profile so multiple local instances don't
         # overwrite each other's key files.
-        profile = "identity" if port == DEFAULT_LISTEN_PORT else f"identity_{port}"
-        self.identity_manager = IdentityManager(profile=profile)
+        self.identity_manager = IdentityManager(profile=f"identity{port_suffix}")
         self.identity_manager.load_identity()
         self.private_key = self.identity_manager.get_private_key()
         self.public_key  = self.identity_manager.get_public_key()
 
-        self.tofu = TOFUEngine()
+        # Trust store — same reasoning: without a per-port profile, two
+        # local instances write data/trust/known_peers.json concurrently,
+        # which on Windows fails the atomic rename ("Access is denied") and
+        # can leave the file corrupted for every future run.
+        self.tofu = TOFUEngine(profile=f"known_peers{port_suffix}")
 
         # Replay-attack mitigation: FIFO deque of recently seen message IDs.
         # Using collections.deque with a maxlen gives O(1) eviction of the
@@ -148,6 +168,11 @@ class P2PNode:
             daemon=True, name="DiscoveryExpiration",
         )
         self.expiration_thread.start()
+
+        threading.Thread(
+            target=self._send_heartbeats,
+            daemon=True, name="Heartbeat",
+        ).start()
 
         threading.Thread(
             target=self._accept_connections,
@@ -302,6 +327,35 @@ class P2PNode:
                 failed += 1
         return sent, failed
 
+    def _send_heartbeats(self) -> None:
+        """Ping every active session every _PING_INTERVAL seconds.
+
+        Keeps data flowing on otherwise-idle connections so the receive
+        loop's _RECV_TIMEOUT (see its comment) never mistakes a quiet-but-
+        alive peer for a dead one. No reply is expected or needed — the
+        receiving side's own next receive_packet() call gets a fresh
+        _RECV_TIMEOUT window simply by having received *anything*.
+        """
+        while self.is_running:
+            time.sleep(_PING_INTERVAL)
+            with self.peers_lock:
+                targets = [(addr, self.peers.get(addr))
+                          for addr, sess in self.peer_sessions.items()
+                          if sess["state"] == "active"]
+            if not targets:
+                continue
+            packet = self.protocol_handler.create_packet(
+                PacketType.PING, self.username, "", crypto=None)
+            data = self.protocol_handler.serialize(packet)
+            for tcp_addr, sock in targets:
+                if sock is None:
+                    continue
+                try:
+                    sock.sendall(data)
+                except OSError as exc:
+                    logger.debug("[NODE] Heartbeat send failed for %s: %s", tcp_addr, exc)
+                    self._remove_peer(sock)
+
     def disconnect_peer(self, peer_id: str) -> bool:
         """Close the active session for *peer_id* (user-initiated).
 
@@ -449,6 +503,11 @@ class P2PNode:
                     self._handle_message(packet, peer_socket)
                 elif msg_type in PacketType.FILE_TYPES:
                     self._handle_file_packet(packet, peer_socket)
+                elif msg_type == PacketType.PING:
+                    # No action needed — just receiving it already gave this
+                    # loop's next receive_packet() call a fresh _RECV_TIMEOUT
+                    # window, which is the entire point (see _send_heartbeats).
+                    pass
                 else:
                     logger.debug("[NODE] Unknown packet type '%s'", msg_type)
 

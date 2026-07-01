@@ -25,6 +25,13 @@ class PacketType:
     SYSTEM        = "system"
     ERROR         = "error"
 
+    # Sent periodically on every active session, independent of chat
+    # activity — see network/node.py's heartbeat thread. Its only purpose
+    # is to keep data flowing so the receive loop's inactivity timeout
+    # never misfires on a peer that's simply idle (not dead). No reply is
+    # expected; receiving it is itself what resets the timeout.
+    PING          = "ping"
+
     # ── File transfer ──────────────────────────────────────────────────
     # Workflow (Telegram-style):
     #   Sender   → FILE_META        (metadata only; no data yet)
@@ -165,6 +172,9 @@ class ProtocolHandler:
         elif packet_type in PacketType.FILE_TYPES:
             # File-transfer packets are validated by TransferManager, not here.
             return True
+
+        elif packet_type == PacketType.PING:
+            return True   # no payload — the type field alone is the whole packet
 
         else:
             logger.warning("validate_packet: unknown type '%s'", packet_type)

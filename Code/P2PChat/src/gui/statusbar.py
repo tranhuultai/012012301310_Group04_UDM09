@@ -23,7 +23,7 @@ class StatusBar(ctk.CTkFrame):
         self._disc_label.grid(row=0, column=1, sticky="w", padx=8)
 
         self._conn_label = ctk.CTkLabel(
-            self, text="⎋  Not connected",
+            self, text="🔌  Not connected",
             font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="w")
         self._conn_label.grid(row=0, column=2, sticky="w", padx=8)
 
@@ -64,12 +64,12 @@ class StatusBar(ctk.CTkFrame):
     def set_connected_peer(self, label: str) -> None:
         """Show connected peer in segment 3."""
         self._conn_label.configure(
-            text=f"⎋  {label}", text_color=T.ACCENT)
+            text=f"🔌  {label}", text_color=T.ACCENT)
 
     def set_disconnected(self) -> None:
         """Reset segment 3 to disconnected state."""
         self._conn_label.configure(
-            text="⎋  Not connected", text_color=T.TEXT_MUTED)
+            text="🔌  Not connected", text_color=T.TEXT_MUTED)
         self._enc_label.configure(
             text="🔓  —", text_color=T.TEXT_MUTED)
 
