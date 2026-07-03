@@ -1,0 +1,5 @@
+[MASTER]
+# Lets pylint resolve `network.*`, `security.*`, etc. when analysing files
+# outside src/ (tests/*.py) — validation is always run from src/, so "."
+# there is src itself.
+init-hook='import sys; sys.path.insert(0, ".")'

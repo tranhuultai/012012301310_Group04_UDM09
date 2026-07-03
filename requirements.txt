@@ -1,11 +1,13 @@
-#GUI framework
+# Runtime
 customtkinter
-
-# Encryption
 cryptography
-
-#JWT
 PyJWT
+pywinstyles
 
-#Testing
+# Test suite (tests/) — CPU/RAM sampling and chart generation
+psutil
+matplotlib
+
+# Dev / QA
 pytest
+pylint
