@@ -51,16 +51,6 @@ class DiscoveryService:
         public_key_pem:  str,
         private_key_pem: str,
     ) -> None:
-        """Initialise the service (does not start yet).
-
-        Args:
-            username: Human-readable name to broadcast.
-            listen_port: TCP port of the owning node.
-            peer_id: SHA-256 peer identifier.
-            fingerprint: Colon-separated hex fingerprint.
-            public_key_pem: PEM public key (included in broadcast packets).
-            private_key_pem: PEM private key (for JWT signing).
-        """
         self.username        = username
         self.listen_port     = listen_port
         self.peer_id         = peer_id
@@ -231,14 +221,11 @@ class DiscoveryService:
                 logger.exception("[DISCOVERY] on_peer_found raised: %s", exc)
 
     def _send_response(self, peer_ip_or_addr) -> None:
-        """Reply to a broadcast with our own identity info.
+        """Reply to a broadcast at (peer_ip, DISCOVERY_PORT) — the peer's listener
+        port, not the ephemeral UDP source port the broadcast came from.
 
-        Sends to (peer_ip, DISCOVERY_PORT) — the port the peer's listener
-        is bound to, NOT the ephemeral UDP source port.
-
-        Args:
-            peer_ip_or_addr: Either an IP string or a (ip, port) tuple
-                (the tuple form is the old API kept for test compatibility).
+        Accepts a bare IP or an (ip, port) tuple; the tuple form is the old
+        API, kept for test compatibility.
         """
         sock = self._bcast_sock
         if sock is None:
@@ -262,13 +249,10 @@ class DiscoveryService:
     # ------------------------------------------------------------------ #
 
     def _get_or_refresh_token(self) -> str:
-        """Return a cached JWT, re-signing only when the cached one is stale.
+        """Return a cached JWT, re-signing only when it's gone stale.
 
-        RSA signing is expensive (~1 ms); doing it every 5 s is wasteful when
-        the JWT is valid for 12 hours.  We refresh every 10 minutes instead.
-
-        Returns:
-            Signed RS256 JWT string.
+        RSA signing is expensive (~1 ms); doing it every 5s is wasteful when
+        the JWT is valid for 12 hours, so we refresh every 10 minutes instead.
         """
         now = time.time()
         if not self._cached_token or now - self._token_created_at > self._TOKEN_REFRESH_SECS:
@@ -283,14 +267,7 @@ class DiscoveryService:
         return self._cached_token
 
     def _make_discovery_packet(self, packet_type: str) -> dict:
-        """Build a complete discovery or discovery_response packet.
-
-        Args:
-            packet_type: One of the DISCOVERY / DISCOVERY_RESPONSE constants.
-
-        Returns:
-            JSON-serialisable dict ready for UDP transmission.
-        """
+        """Build a DISCOVERY or DISCOVERY_RESPONSE packet ready for UDP transmission."""
         return {
             "type":           packet_type,
             "instance_id":    self.instance_id,
@@ -309,15 +286,8 @@ class DiscoveryService:
     # ------------------------------------------------------------------ #
 
     def update_peer_registry(self, packet: dict, address: tuple) -> None:
-        """Update the local nearby-peer registry from *packet*.
-
-        This local copy is primarily used by unit tests.  The authoritative
-        registry is maintained by P2PNode.discovered_peers.
-
-        Args:
-            packet: Discovery packet dict.
-            address: (ip, port) of the packet sender.
-        """
+        """Update the local nearby-peer registry (mainly for unit tests —
+        P2PNode.discovered_peers is the authoritative one)."""
         peer_id = packet.get("peer_id")
         if not peer_id:
             return
@@ -332,11 +302,7 @@ class DiscoveryService:
         }
 
     def get_nearby_peers(self) -> dict:
-        """Return a shallow copy of the local nearby-peer registry.
-
-        Returns:
-            Dict mapping peer_id → peer info dict.
-        """
+        """Return a shallow copy of the local nearby-peer registry."""
         return dict(self.nearby_peers)
 
     def cleanup_expired_peers(self) -> None:

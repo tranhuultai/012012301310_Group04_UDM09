@@ -20,12 +20,7 @@ class TOFUEngine:
     """
 
     def __init__(self, profile: str = "known_peers") -> None:
-        """Initialise the engine with a fresh TrustStore.
-
-        Args:
-            profile: Forwarded to TrustStore — see its docstring for why a
-                per-port value matters when testing multiple local instances.
-        """
+        """profile is forwarded to TrustStore (per-port value for multi-instance testing)."""
         self.store = TrustStore(profile=profile)
 
     # ------------------------------------------------------------------ #
@@ -33,15 +28,7 @@ class TOFUEngine:
     # ------------------------------------------------------------------ #
 
     def verify_peer(self, peer_id: str, fingerprint: str) -> str:
-        """Verify *peer_id* against its stored fingerprint.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            fingerprint: Fingerprint received from the peer.
-
-        Returns:
-            One of the TrustState constants representing the outcome.
-        """
+        """Check peer_id against its stored fingerprint, returning the resulting TrustState."""
         rec = self.store.get_peer(peer_id)
 
         if rec is None:
@@ -73,100 +60,56 @@ class TOFUEngine:
         return TrustState.MISMATCH
 
     def add_peer(self, peer_id: str, fingerprint: str) -> None:
-        """Explicitly add *peer_id* as TRUSTED (used by tests and contacts).
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            fingerprint: Fingerprint to store.
-        """
+        """Explicitly add peer_id as TRUSTED (used by tests and contacts)."""
         self.store.add_peer(peer_id, fingerprint, TrustState.TRUSTED)
 
     def update_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
-        """Update the stored record for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            fingerprint: New fingerprint value.
-            trust_state: New trust state.
-        """
+        """Overwrite the stored record for peer_id."""
         self.store.update_peer(peer_id, fingerprint, trust_state)
 
-    def trust_peer(self, peer_id: str) -> bool:
-        """Mark *peer_id* as TRUSTED (user-initiated).
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            True if the record was found and updated.
-        """
+    def _set_trust_state(self, peer_id: str, trust_state: str) -> bool:
+        """Move an existing peer to trust_state; False if peer is unknown."""
         rec = self.store.get_peer(peer_id)
         if not rec:
-            logger.warning("[TOFU] trust_peer: unknown peer %s", peer_id[:12])
             return False
-        self.store.update_peer(peer_id, rec["fingerprint"], TrustState.TRUSTED)
-        logger.info("[TOFU] Peer %s manually trusted.", peer_id[:12])
+        self.store.update_peer(peer_id, rec["fingerprint"], trust_state)
         return True
+
+    def trust_peer(self, peer_id: str) -> bool:
+        """Mark peer_id as TRUSTED (user-initiated)."""
+        ok = self._set_trust_state(peer_id, TrustState.TRUSTED)
+        if ok:
+            logger.info("[TOFU] Peer %s manually trusted.", peer_id[:12])
+        else:
+            logger.warning("[TOFU] trust_peer: unknown peer %s", peer_id[:12])
+        return ok
 
     def block_peer(self, peer_id: str) -> bool:
-        """Mark *peer_id* as BLOCKED (user-initiated).
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            True if the record was found and updated.
-        """
-        rec = self.store.get_peer(peer_id)
-        if not rec:
+        """Mark peer_id as BLOCKED (user-initiated)."""
+        ok = self._set_trust_state(peer_id, TrustState.BLOCKED)
+        if ok:
+            logger.info("[TOFU] Peer %s BLOCKED.", peer_id[:12])
+        else:
             logger.warning("[TOFU] block_peer: unknown peer %s", peer_id[:12])
-            return False
-        self.store.update_peer(peer_id, rec["fingerprint"], TrustState.BLOCKED)
-        logger.info("[TOFU] Peer %s BLOCKED.", peer_id[:12])
-        return True
+        return ok
 
     def unblock_peer(self, peer_id: str) -> bool:
-        """Unblock *peer_id* by resetting trust to TRUSTED.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            True if the record was found and updated.
-        """
-        rec = self.store.get_peer(peer_id)
-        if not rec:
-            return False
-        self.store.update_peer(peer_id, rec["fingerprint"], TrustState.TRUSTED)
-        logger.info("[TOFU] Peer %s unblocked → TRUSTED.", peer_id[:12])
-        return True
+        """Unblock peer_id by resetting trust to TRUSTED."""
+        ok = self._set_trust_state(peer_id, TrustState.TRUSTED)
+        if ok:
+            logger.info("[TOFU] Peer %s unblocked → TRUSTED.", peer_id[:12])
+        return ok
 
     def accept_mismatch(self, peer_id: str, new_fingerprint: str) -> None:
-        """Accept a fingerprint change and re-trust *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            new_fingerprint: The new fingerprint to trust.
-        """
+        """Accept a fingerprint change and re-trust peer_id under the new key."""
         self.store.update_peer(peer_id, new_fingerprint, TrustState.TRUSTED)
         logger.info("[TOFU] Mismatch accepted for %s — new key trusted.", peer_id[:12])
 
     def get_trust_state(self, peer_id: str) -> str:
-        """Return the current trust state string for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            TrustState constant, or TrustState.NEW if peer is unknown.
-        """
+        """Return peer_id's trust state, or TrustState.NEW if unknown."""
         rec = self.store.get_peer(peer_id)
         return rec["trust_state"] if rec else TrustState.NEW
 
     def is_blocked(self, peer_id: str) -> bool:
-        """Return True if *peer_id* is BLOCKED.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Return True if peer_id is BLOCKED."""
         return self.store.is_blocked(peer_id)

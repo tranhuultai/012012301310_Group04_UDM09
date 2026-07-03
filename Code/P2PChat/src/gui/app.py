@@ -495,16 +495,8 @@ class ChatApp(ctk.CTk):
         self.after(0, _upd)
 
     def _show_mismatch_dialog(self, peer_id: str, info: dict) -> None:
-        """Show a security warning when a peer's fingerprint has changed.
-
-        Retrieves the stored (known) fingerprint from the trust store and
-        the new (current) fingerprint from the discovery packet.  The user
-        can choose to accept the new key or block the peer immediately.
-
-        Args:
-            peer_id: SHA-256 identifier of the peer with changed fingerprint.
-            info: Discovery info dict (contains current fingerprint).
-        """
+        """Show a security warning when peer_id's fingerprint has changed,
+        letting the user accept the new key or block the peer."""
         rec = self.controller.node.tofu.store.get_peer(peer_id) if self.controller.node else None
         known_fp   = rec.get("fingerprint", "—") if rec else "—"
         current_fp = info.get("fingerprint", "—")

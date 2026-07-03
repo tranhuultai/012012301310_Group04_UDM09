@@ -19,14 +19,7 @@ _TRUST_LABELS: dict[str, str] = {
 
 
 def _time_ago(ts: float) -> str:
-    """Return a human-readable elapsed-time string for *ts*.
-
-    Args:
-        ts: Unix timestamp of the last-seen moment.
-
-    Returns:
-        Short relative string such as "Just now", "5m ago", "2h ago".
-    """
+    """Elapsed time since Unix timestamp ts, e.g. "Just now", "5m ago", "2h ago"."""
     diff = time.time() - ts
     if diff < 5:
         return "Just now"

@@ -226,25 +226,12 @@ class MainWindow(ctk.CTkFrame):
         self.chat_box.add_received(sender, msg)
 
     def add_file_sent_message(self, sender: str, filename: str, size_str: str) -> None:
-        """Show a right-aligned sent-file card (no download button).
-
-        Args:
-            sender: Local display name.
-            filename: File name sent.
-            size_str: Pre-formatted size string.
-        """
+        """Show a right-aligned sent-file card (no download button)."""
         self.chat_box.add_file_sent(sender, filename, size_str)
 
     def add_file_message(self, sender: str, filename: str,
                          size_str: str, on_download=None) -> None:
-        """Show a file-offer card in the chat area.
-
-        Args:
-            sender: Display name of the sender.
-            filename: File name.
-            size_str: Pre-formatted size string.
-            on_download: Callback when user clicks Download.
-        """
+        """Show a file-offer card with a Download button (calls on_download)."""
         self.chat_box.add_file_message(sender, filename, size_str, on_download)
 
     def add_sent_message(self, sender: str, recipient: str, msg: str) -> None:
@@ -312,31 +299,15 @@ class MainWindow(ctk.CTkFrame):
     # Transfer Panel API
     def on_transfer_started(self, tid: str, filename: str,
                             peer: str, direction: str) -> None:
-        """Notify the transfer panel that a transfer has begun.
-
-        Args:
-            tid: Unique transfer ID.
-            filename: Name of the file being transferred.
-            peer: Display name of the remote peer.
-            direction: "out" or "in".
-        """
+        """Notify the transfer panel that a transfer has begun (direction: "out"/"in")."""
         self.transfer_panel.add_transfer(tid, filename, peer, direction)
 
     def on_transfer_progress(self, tid: str, progress: float) -> None:
-        """Update the progress bar for *tid*.
-
-        Args:
-            tid: Unique transfer ID.
-            progress: Value in [0, 1].
-        """
+        """Update the progress bar for tid (progress in [0, 1])."""
         self.transfer_panel.update_transfer(tid, progress)
 
     def on_transfer_complete(self, tid: str) -> None:
-        """Remove the transfer card for *tid* (transfer finished or cancelled).
-
-        Args:
-            tid: Unique transfer ID.
-        """
+        """Remove the transfer card for tid (transfer finished or cancelled)."""
         self.transfer_panel.remove_transfer(tid)
 
     # Status bar wrappers
@@ -358,13 +329,7 @@ class MainWindow(ctk.CTkFrame):
     # Trust dialog
     def show_trust_dialog(self, mode: str, peer_info: dict,
                           callback: Callable) -> None:
-        """Display the TOFU security verification dialog.
-
-        Args:
-            mode: "new_peer" or "warning".
-            peer_info: PeerInfo dict passed to the dialog.
-            callback: Called with the user's decision string.
-        """
+        """Display the TOFU security verification dialog (mode: "new_peer"/"warning")."""
         TrustDialog(self.master, mode=mode, peer_info=peer_info,
                     callback=callback)
 

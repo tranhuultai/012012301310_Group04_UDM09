@@ -85,9 +85,6 @@ class ProtocolHandler:
     HEADER_SIZE     = 4
     MAX_PACKET_SIZE = MAX_PACKET_SIZE
 
-    def __init__(self) -> None:
-        """Initialise the protocol handler (stateless)."""
-
     def create_packet(
         self,
         msg_type: str,
@@ -95,20 +92,8 @@ class ProtocolHandler:
         payload_content: str,
         crypto: Optional[CryptoHandler] = None,
     ) -> dict[str, Any]:
-        """Build a complete packet dict.
-
-        Chat payloads are Fernet-encrypted when *crypto* is provided;
-        handshake payloads are sent in plain text.
-
-        Args:
-            msg_type: One of the PacketType constants.
-            sender: Username of the originating peer.
-            payload_content: Plaintext message body.
-            crypto: Active CryptoHandler for the session, or None.
-
-        Returns:
-            Dict ready for serialisation.
-        """
+        """Build a packet dict — payload is Fernet-encrypted when crypto is given,
+        plain text otherwise (handshake packets have no session key yet)."""
         payload: Any = crypto.encrypt(payload_content) if crypto is not None else payload_content
 
         return {
@@ -120,29 +105,15 @@ class ProtocolHandler:
         }
 
     def serialize(self, packet: dict[str, Any]) -> bytes:
-        """Serialise *packet* into a 4-byte length-prefixed byte stream.
-
-        Args:
-            packet: Dict to serialise as JSON.
-
-        Returns:
-            Bytes in the format [4-byte big-endian length][JSON body].
-        """
+        """Encode packet as JSON with a 4-byte big-endian length prefix."""
         json_data = json.dumps(packet).encode("utf-8")
         return struct.pack("!I", len(json_data)) + json_data
 
     def validate_packet(self, packet: dict[str, Any]) -> bool:
-        """Return True only if *packet* carries all required fields with correct types.
+        """Check packet has the required fields for its type, with correct types.
 
-        Every packet must pass this check before processing.
-        Malformed packets are silently dropped — they must never crash the
-        receive loop.
-
-        Args:
-            packet: Incoming packet dict to validate.
-
-        Returns:
-            True if the packet is structurally valid, False otherwise.
+        Every packet must pass this before processing. Malformed packets are
+        silently dropped — they must never crash the receive loop.
         """
         if not isinstance(packet, dict):
             logger.warning("validate_packet: not a dict")
@@ -192,18 +163,7 @@ class ProtocolHandler:
         packet: dict[str, Any],
         crypto: Optional[CryptoHandler] = None,
     ) -> str:
-        """Decrypt packet payload.
-
-        Args:
-            packet: Packet dict containing a payload key.
-            crypto: Active CryptoHandler, or None for plain payloads.
-
-        Returns:
-            Decrypted (or plain) payload string.
-
-        Raises:
-            cryptography.fernet.InvalidToken: If decryption fails.
-        """
+        """Decrypt packet["payload"], or return it as-is if crypto is None."""
         if crypto is not None:
             return crypto.decrypt(packet["payload"])
         return packet["payload"]
@@ -213,15 +173,7 @@ class ProtocolHandler:
         packet: dict[str, Any],
         crypto: Optional[CryptoHandler] = None,
     ) -> Optional[str]:
-        """Validate then decrypt a packet.
-
-        Args:
-            packet: Packet dict to validate and decrypt.
-            crypto: Active CryptoHandler, or None.
-
-        Returns:
-            Decrypted payload string, or None on any failure.
-        """
+        """Validate then decrypt packet, returning None on any failure."""
         if not self.validate_packet(packet):
             return None
         try:
@@ -231,15 +183,7 @@ class ProtocolHandler:
             return None
 
     def receive_exact(self, peer_socket: Any, size: int) -> bytes:
-        """Read exactly *size* bytes from *peer_socket*.
-
-        Args:
-            peer_socket: Connected socket object.
-            size: Number of bytes to read.
-
-        Returns:
-            Bytes read, or b"" when the connection is closed.
-        """
+        """Read exactly size bytes, or b"" if the connection closes first."""
         received_data = bytearray()
         while len(received_data) < size:
             data = peer_socket.recv(size - len(received_data))
@@ -249,16 +193,9 @@ class ProtocolHandler:
         return bytes(received_data)
 
     def receive_packet(self, peer_socket: Any) -> Optional[dict[str, Any]]:
-        """Read one framed packet from *peer_socket*.
+        """Read one framed packet, or None if closed / oversized / malformed.
 
-        Returns the parsed dict, or None if the connection closed or the
-        packet was oversized / malformed. Never raises.
-
-        Args:
-            peer_socket: Connected socket object.
-
-        Returns:
-            Parsed packet dict, or None.
+        Never raises — the receive loop must survive a bad peer.
         """
         try:
             header = self.receive_exact(peer_socket, self.HEADER_SIZE)

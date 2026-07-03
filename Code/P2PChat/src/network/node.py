@@ -20,16 +20,12 @@ from config import SOCKET_TIMEOUT, DEFAULT_LISTEN_PORT
 logger = logging.getLogger(__name__)
 
 HANDSHAKE_TIMEOUT = 10   # seconds before a pending handshake is dropped
-# Per-socket read timeout on an *active* chat session — the receive loop
-# treats silence longer than this as a dead peer (see _receive_messages).
-# Previously 30s with no heartbeat, so any normal conversational pause
-# (reading, composing a reply) longer than that silently tore the session
-# down mid-chat ("Session ended" with no clear cause) — chat activity was
-# the only thing keeping the timer reset, and real conversations aren't
-# continuous. _send_heartbeats now pings every active session every
-# _PING_INTERVAL seconds regardless of chat activity, so this timeout only
-# ever fires for a genuinely dead peer (a few missed pings in a row), never
-# for one that's simply idle.
+
+# _RECV_TIMEOUT used to be 30s with no heartbeat, so a quiet-but-alive chat
+# (no traffic while reading/composing) would get silently killed. Now
+# _send_heartbeats pings every active session every _PING_INTERVAL seconds
+# regardless of chat activity, so this timeout only fires for a peer that
+# misses several pings in a row — i.e. actually dead, not just idle.
 _RECV_TIMEOUT  = 45   # per-socket read timeout (catches stalled peers)
 _PING_INTERVAL = 15   # heartbeat period; comfortably under _RECV_TIMEOUT
 _AddressMap       = dict[int, str]  # id(socket) -> "IP:PORT"
@@ -71,16 +67,9 @@ class P2PNode:
         on_connected=None,
         on_peer_discovered=None,
     ) -> None:
-        """Initialise the node (does not bind or start threads yet).
-
-        Args:
-            host: Bind address ("0.0.0.0" for all interfaces).
-            port: TCP listen port.
-            username: Display name broadcast during discovery.
-            on_message: (peer_id, sender, payload) callback for inbound messages.
-            on_disconnect: (tcp_addr) callback when a peer disconnects.
-            on_connected: (peer_id, tcp_addr) callback when session is active.
-            on_peer_discovered: (peer_id, info) callback on discovery events.
+        """Construct the node (does not bind or start threads yet). Callback signatures:
+        on_message(peer_id, sender, payload), on_disconnect(tcp_addr),
+        on_connected(peer_id, tcp_addr), on_peer_discovered(peer_id, info).
         """
         self.host     = host
         self.port     = port
@@ -104,28 +93,20 @@ class P2PNode:
 
         self.protocol_handler = ProtocolHandler()
 
-        # Per-port suffix so multiple local instances (the documented test
-        # workflow: `python main.py`, `python main.py 1000`, ...) don't
-        # collide on shared files. Empty for the default port keeps existing
-        # single-instance file names unchanged.
+        # Per-port profile suffix so multiple local instances (`python main.py`,
+        # `python main.py 1000`, ...) don't collide on shared identity/trust
+        # files — see IdentityManager/TrustStore for why that matters on Windows.
         port_suffix = "" if port == DEFAULT_LISTEN_PORT else f"_{port}"
 
-        # Identity — per-port profile so multiple local instances don't
-        # overwrite each other's key files.
         self.identity_manager = IdentityManager(profile=f"identity{port_suffix}")
         self.identity_manager.load_identity()
         self.private_key = self.identity_manager.get_private_key()
         self.public_key  = self.identity_manager.get_public_key()
 
-        # Trust store — same reasoning: without a per-port profile, two
-        # local instances write data/trust/known_peers.json concurrently,
-        # which on Windows fails the atomic rename ("Access is denied") and
-        # can leave the file corrupted for every future run.
         self.tofu = TOFUEngine(profile=f"known_peers{port_suffix}")
 
-        # Replay-attack mitigation: FIFO deque of recently seen message IDs.
-        # Using collections.deque with a maxlen gives O(1) eviction of the
-        # oldest entry — no "random eviction" like the previous set approach.
+        # Replay-attack mitigation: bounded FIFO of recently seen message IDs.
+        # deque(maxlen=N) gives O(1) FIFO eviction — no "random eviction" like a plain set.
         self._seen_msg_deque: collections.deque = collections.deque(maxlen=_SEEN_MSG_MAX)
         self._seen_msg_set:   set[str]          = set()
         self._seen_lock = threading.Lock()
@@ -213,17 +194,7 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, host: str, port: int) -> bool:
-        """Initiate a TCP connection and handshake with *host*:*port*.
-
-        Includes two dedup checks to prevent double-connections.
-
-        Args:
-            host: Target peer IP.
-            port: Target peer listen port.
-
-        Returns:
-            True if a new connection was established.
-        """
+        """Dial host:port and start the handshake; False if already connected."""
         tcp_addr = f"{host}:{port}"
 
         # Dedup 1: exact address already connected.
@@ -279,15 +250,7 @@ class P2PNode:
             return False
 
     def send_message(self, message: str, tcp_addr: str) -> bool:
-        """Send an encrypted message to the peer at *tcp_addr*.
-
-        Args:
-            message: Plaintext body.
-            tcp_addr: "IP:PORT" session key.
-
-        Returns:
-            True if sent successfully.
-        """
+        """Encrypt and send message to the session at tcp_addr ("IP:PORT")."""
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             sock    = self.peers.get(tcp_addr)
@@ -309,14 +272,7 @@ class P2PNode:
             return False
 
     def broadcast_message(self, message: str) -> tuple[int, int]:
-        """Send *message* to all active sessions.
-
-        Args:
-            message: Plaintext body.
-
-        Returns:
-            (sent_count, failed_count) tuple.
-        """
+        """Send message to every active session; returns (sent_count, failed_count)."""
         with self.peers_lock:
             active = [a for a, s in self.peer_sessions.items() if s["state"] == "active"]
         sent = failed = 0
@@ -357,14 +313,7 @@ class P2PNode:
                     self._remove_peer(sock)
 
     def disconnect_peer(self, peer_id: str) -> bool:
-        """Close the active session for *peer_id* (user-initiated).
-
-        Args:
-            peer_id: SHA-256 identifier.
-
-        Returns:
-            True if a session was found and closed.
-        """
+        """Close the active session for peer_id (user-initiated)."""
         with self.peers_lock:
             target_sock = None
             for addr, sess in self.peer_sessions.items():
@@ -384,24 +333,14 @@ class P2PNode:
         self.discovery.discover()
 
     def get_discovered_peers(self) -> dict[str, dict]:
-        """Return a snapshot of all known peers.
-
-        Returns:
-            Dict mapping peer_id → info dict.
-        """
+        """Return a snapshot of discovered_peers (peer_id -> info dict)."""
         with self.discovery_lock:
             return dict(self.discovered_peers)
 
     def get_active_session_for_ip(self, ip: str) -> str | None:
-        """Find an active session key for *ip* (any port).
+        """Find an active session's "IP:port" key for ip (any port).
 
-        Bridges discovery listen-port → OS-assigned ephemeral port.
-
-        Args:
-            ip: Remote peer IP.
-
-        Returns:
-            "IP:port" key of an active session, or None.
+        Bridges discovery's listen-port to the OS-assigned ephemeral port.
         """
         with self.peers_lock:
             for tcp_addr, sess in self.peer_sessions.items():
@@ -828,15 +767,9 @@ class P2PNode:
             time.sleep(5)
 
     def _sync_discovery_on_connect(self, peer_id: str, tcp_addr: str) -> None:
-        """Update discovered_peers when a session becomes active.
-
-        Stores the actual (possibly ephemeral) tcp_addr so that downstream
-        lookups by tcp_address still work on the acceptor side.
-
-        Args:
-            peer_id: SHA-256 identifier of the connected peer.
-            tcp_addr: Actual live TCP address (may be ephemeral port).
-        """
+        """Store the live (possibly ephemeral) tcp_addr into discovered_peers
+        once a session goes active, so acceptor-side lookups by tcp_address
+        keep working."""
         if not peer_id:
             return
         with self.discovery_lock:
@@ -851,16 +784,7 @@ class P2PNode:
 
     def _register_peer(self, tcp_addr: str, sock: socket.socket,
                        is_initiator: bool) -> bool:
-        """Register a new TCP connection.
-
-        Args:
-            tcp_addr: "IP:PORT" key.
-            sock: Connected socket.
-            is_initiator: True if we dialled out.
-
-        Returns:
-            False if *tcp_addr* is already registered.
-        """
+        """Register a new TCP connection; False if tcp_addr is already registered."""
         with self.peers_lock:
             if tcp_addr in self.peers:
                 return False
@@ -1037,14 +961,7 @@ class P2PNode:
             return self._sock_to_addr.get(id(peer_socket))
 
     def _get_peer_id(self, peer_socket: socket.socket) -> str | None:
-        """Compat alias for _get_tcp_addr (used by tests).
-
-        Args:
-            peer_socket: Connected socket object.
-
-        Returns:
-            "IP:PORT" key or None.
-        """
+        """Compat alias for _get_tcp_addr (used by tests)."""
         return self._get_tcp_addr(peer_socket)
 
     def _start_receive_thread(self, tcp_addr: str, sock: socket.socket) -> None:
@@ -1061,13 +978,8 @@ class P2PNode:
                              peer_socket: socket.socket) -> None:
         """Route an inbound file-transfer packet to TransferManager.
 
-        The session crypto object is passed so TransferManager can decrypt
-        FILE_CHUNK payloads using the existing Fernet session without touching
-        node internals.
-
-        Args:
-            packet: Parsed file-transfer packet dict.
-            peer_socket: Source socket (used to look up session).
+        Passes the session's crypto along so TransferManager can decrypt
+        FILE_CHUNK payloads without reaching into node internals.
         """
         if self.on_file_packet is None:
             return
@@ -1079,18 +991,8 @@ class P2PNode:
         self._fire_callback(self.on_file_packet, packet, crypto, sender_pid)
 
     def send_raw_packet(self, packet: dict, tcp_addr: str) -> bool:
-        """Send a pre-built packet dict to the peer at *tcp_addr*.
-
-        Used by TransferManager to send file-transfer packets without going
-        through create_packet (which assumes a chat-message envelope).
-
-        Args:
-            packet: Ready-to-send dict (must include "type" key).
-            tcp_addr: "IP:PORT" session key.
-
-        Returns:
-            True if the packet was written to the socket successfully.
-        """
+        """Send a pre-built packet dict as-is — used by TransferManager for
+        file-transfer packets, which don't fit create_packet's chat-message shape."""
         with self.peers_lock:
             sock = self.peers.get(tcp_addr)
         if sock is None:

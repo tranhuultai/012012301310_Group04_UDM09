@@ -13,7 +13,7 @@ Design decisions:
       own top gap) so the caller (ChatBox._do_relayout) can advance its
       y-cursor. Height comes from canvas.bbox() on the actual rendered text
       item — never hand-rolled font-metrics math.
-    - ``grouped`` (consecutive messages from the same sender) tightens the
+    - grouped (consecutive messages from the same sender) tightens the
       gap above the bubble and, for received messages, hides the repeated
       sender name — the standard grouping convention in Telegram/Discord/
       Messenger, so a burst of messages from one person doesn't visually
@@ -57,22 +57,11 @@ def _round_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
 def draw_bubble(canvas, top_y: int, canvas_width: int, wraplength: int,
                  message: str, sender: str, is_me: bool, grouped: bool,
                  tag: str) -> int:
-    """Draw one message bubble at *top_y* and return its total height.
+    """Draw one message bubble at top_y; returns total height including its top gap.
 
-    Args:
-        canvas: Target tkinter.Canvas.
-        top_y: Y-coordinate of the row's top edge.
-        canvas_width: Current visible canvas width (for alignment).
-        wraplength: Max text width in pixels before wrapping.
-        message: Plaintext body.
-        sender: Display name (shown on received bubbles, first-of-group only).
-        is_me: True -> right-aligned indigo bubble; False -> left-aligned card.
-        grouped: True if this message immediately follows another from the
-            same sender (see module docstring).
-        tag: Unique canvas tag for this row (eviction deletes by this tag).
-
-    Returns:
-        Total pixel height this row occupies, including its top gap.
+    is_me: right-aligned indigo bubble vs left-aligned card.
+    grouped: follows another message from the same sender (see module docstring).
+    tag: this row's canvas tag — eviction deletes everything under it.
     """
     ts = _now()
     top_gap = _GAP_GROUPED if grouped else _GAP_NEW_GROUP

@@ -36,15 +36,7 @@ class MessageHistory:
     # ------------------------------------------------------------------ #
 
     def load_history(self, peer_id: str) -> list[dict[str, Any]]:
-        """Load and return all history records for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            List of HistoryRecord dicts, oldest first.  Empty list if no
-            history exists or the file is unreadable.
-        """
+        """Return all HistoryRecords for peer_id, oldest first (empty if none)."""
         file_path = self.base_dir / f"{peer_id}.json"
         history = StorageManager.load_json(file_path, [])
         if not isinstance(history, list):
@@ -52,29 +44,15 @@ class MessageHistory:
         return history
 
     def save_history(self, peer_id: str, records: list[dict[str, Any]]) -> None:
-        """Overwrite the history file for *peer_id* with *records*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            records: Complete list of HistoryRecord dicts to persist.
-        """
+        """Overwrite peer_id's history file with records."""
         file_path = self.base_dir / f"{peer_id}.json"
         StorageManager.save_json(file_path, records)
 
     def append_message(self, peer_id: str, record: dict[str, Any]) -> None:
-        """Append one message record and persist atomically.
+        """Append one record under the lock (read-modify-write, see __init__).
 
-        Thread-safe: acquires _lock for the full read-modify-write cycle
-        so that concurrent calls from multiple receive threads cannot lose
-        each other's messages.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            record: HistoryRecord dict to append.
-
-        Note:
-            This loads the entire file on every call (O(n) read).  Acceptable
-            for the expected message volumes in a course-project context.
+        Reloads the whole file each call — O(n), fine at course-project
+        message volumes.
         """
         with self._lock:
             history = self.load_history(peer_id)
@@ -82,19 +60,11 @@ class MessageHistory:
             self.save_history(peer_id, history)
 
     def clear_history(self, peer_id: str) -> None:
-        """Delete all history for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Delete all history for peer_id."""
         file_path = self.base_dir / f"{peer_id}.json"
         if file_path.exists():
             file_path.unlink()
 
     def get_message_count(self, peer_id: str) -> int:
-        """Return the number of stored messages for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Return the number of stored messages for peer_id."""
         return len(self.load_history(peer_id))

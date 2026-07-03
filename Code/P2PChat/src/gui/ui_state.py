@@ -7,19 +7,9 @@ from typing import Any
 
 @dataclass
 class UIState:
-    """Holds transient GUI state in one place.
-
-    Rationale
-    ---------
-    Network callbacks arrive on background threads.  The ChatApp schedules
-    state updates here via after(0, ...), then reads from this object
-    when rebuilding the sidebar or resolving peer info for the chat header.
-
-    Keeping a single discovered_peers dict here avoids passing raw dicts
-    through multiple callback hops and gives one authoritative read path for
-    all GUI components.
-
-    Only the fields and methods actually used by ChatApp are included.
+    """Transient GUI state, updated from network callbacks via after(0, ...)
+    and read back when rebuilding the sidebar or chat header. One place to
+    read from instead of passing raw dicts through every callback hop.
     """
 
     # Registry of all peers seen via UDP discovery or TCP handshake.
@@ -38,12 +28,7 @@ class UIState:
 
     def update_discovered_peer(self, peer_id: str,
                                 peer_info: dict[str, Any]) -> None:
-        """Insert or replace *peer_id* in the registry.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            peer_info: Peer info dict from discovery or handshake.
-        """
+        """Insert or replace peer_id in the registry."""
         self.discovered_peers[peer_id] = peer_info
 
     # ------------------------------------------------------------------ #
@@ -51,11 +36,7 @@ class UIState:
     # ------------------------------------------------------------------ #
 
     def select_peer(self, peer_id: str | None) -> None:
-        """Set the currently-selected peer.
-
-        Args:
-            peer_id: SHA-256 peer identifier, or None to deselect.
-        """
+        """Set the currently-selected peer (None to deselect)."""
         self.active_peer_id = peer_id
 
     # ------------------------------------------------------------------ #
@@ -63,9 +44,5 @@ class UIState:
     # ------------------------------------------------------------------ #
 
     def set_connection_status(self, status: str) -> None:
-        """Update the overall connection status string.
-
-        Args:
-            status: One of "offline", "connected", etc.
-        """
+        """Update the overall connection status string ("offline", "connected", ...)."""
         self.connection_status = status

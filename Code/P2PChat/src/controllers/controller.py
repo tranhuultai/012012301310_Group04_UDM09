@@ -38,20 +38,13 @@ class ChatController:
         on_file_meta:         Optional[Callable] = None,
         schedule_gui:         Optional[Callable] = None,
     ) -> None:
-        """Initialise the controller with GUI callback references.
+        """Wire GUI callback references. Signatures:
 
-        Args:
-            on_system: Called with a system/status string for the chat box.
-            on_message: Called with (peer_id, sender, payload) on incoming messages.
-            on_connected: Called with (peer_id, tcp_addr) when a session becomes active.
-            on_disconnect: Called with tcp_addr when a peer disconnects.
-            on_peers_update: Called (no args) whenever the peer list changes.
-            on_peer_discovered: Called with (peer_id, info) on discovery events.
-            on_transfer_started: (tid, filename, peer_name, direction) callback.
-            on_transfer_progress: (tid, fraction) progress callback.
-            on_transfer_complete: (tid, success, message) callback.
-            on_file_meta: (meta, peer_name) when a FILE_META is received.
-            schedule_gui: fn → None scheduler that runs *fn* on the Tk thread.
+        on_system(message), on_message(peer_id, sender, payload),
+        on_connected(peer_id, tcp_addr), on_disconnect(tcp_addr), on_peers_update(),
+        on_peer_discovered(peer_id, info), on_transfer_started(tid, filename, peer_name, direction),
+        on_transfer_progress(tid, fraction), on_transfer_complete(tid, success, message),
+        on_file_meta(meta, peer_name), schedule_gui(fn) — runs fn on the Tk thread.
         """
         self.on_system          = on_system
         self.on_message         = on_message
@@ -89,16 +82,7 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def start_node(self, host: str, port: int, username: str) -> Tuple[bool, str]:
-        """Start the P2PNode and bind to *host*:*port*.
-
-        Args:
-            host: Bind address (e.g. "0.0.0.0").
-            port: TCP listen port.
-            username: Display name broadcast to other peers.
-
-        Returns:
-            (True, info_message) on success, (False, error_message) otherwise.
-        """
+        """Start the P2PNode on host:port. Returns (ok, info_or_error_message)."""
         if self.node is not None:
             return False, "Node already started."
 
@@ -148,15 +132,7 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, ip: str, port: int) -> bool:
-        """Initiate a TCP connection to *ip*:*port*.
-
-        Args:
-            ip: Target peer IP address.
-            port: Target peer TCP port.
-
-        Returns:
-            True if the connection was initiated, False otherwise.
-        """
+        """Initiate a TCP connection to ip:port."""
         if self.node is None:
             self.on_system("Start the node first.")
             return False
@@ -168,17 +144,7 @@ class ChatController:
         return self.node.connect_to_peer(ip, port)
 
     def send_message(self, payload: str, peer_id: str) -> bool:
-        """Send *payload* to the peer identified by *peer_id*.
-
-        Translates peer_id → tcp_address before forwarding to the node.
-
-        Args:
-            payload: Plaintext message body.
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            True if the message was sent successfully.
-        """
+        """Translate peer_id to tcp_address and send payload through the node."""
         if self.node is None:
             self.on_system("Start the node first.")
             return False
@@ -204,68 +170,34 @@ class ChatController:
         return ok
 
     def broadcast_message(self, payload: str) -> Tuple[int, int]:
-        """Send *payload* to all active peers.
-
-        Args:
-            payload: Plaintext message body.
-
-        Returns:
-            (sent_count, failed_count) tuple.
-        """
+        """Send payload to all active peers; returns (sent_count, failed_count)."""
         if self.node is None:
             self.on_system("Start the node first.")
             return 0, 0
         return self.node.broadcast_message(payload)
 
     def send_file(self, filepath: str, peer_id: str) -> tuple[bool, str]:
-        """Send a file to *peer_id*.
+        """Validate filepath, send FILE_META to peer_id, and wait for DOWNLOAD_REQUEST.
 
-        Validates the file, sends FILE_META, and waits for DOWNLOAD_REQUEST.
-
-        Args:
-            filepath: Path to the file to send.
-            peer_id: SHA-256 identifier of the destination peer.
-
-        Returns:
-            (True, transfer_id) or (False, error_message).
+        Returns (True, transfer_id) or (False, error_message).
         """
         if self.transfer_manager is None:
             return False, "Node not started."
         return self.transfer_manager.send_file(filepath, peer_id)
 
     def cancel_transfer(self, transfer_id: str) -> None:
-        """Cancel an in-progress transfer.
-
-        Args:
-            transfer_id: Transfer to cancel.
-        """
+        """Cancel an in-progress transfer."""
         if self.transfer_manager is not None:
             self.transfer_manager.cancel_transfer(transfer_id)
 
     def request_download(self, transfer_id: str) -> bool:
-        """Request download of a received FILE_META.
-
-        Called when the receiver clicks Download.
-
-        Args:
-            transfer_id: Transfer to download.
-
-        Returns:
-            True if the request was sent.
-        """
+        """Request download of a received FILE_META (on receiver's Download click)."""
         if self.transfer_manager is None:
             return False
         return self.transfer_manager.request_download(transfer_id)
 
     def disconnect_peer(self, peer_id: str) -> bool:
-        """Close the active session with *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            True if a session was found and closed.
-        """
+        """Close the active session with peer_id."""
         if self.node is None:
             return False
         return self.node.disconnect_peer(peer_id)
@@ -276,11 +208,7 @@ class ChatController:
             self.node.discover_peers()
 
     def get_discovered_peers(self) -> dict[str, dict]:
-        """Return a snapshot of all currently discovered peers.
-
-        Returns:
-            Dict mapping peer_id → peer info dict.
-        """
+        """Return a snapshot of all currently discovered peers."""
         if self.node is not None:
             return self.node.get_discovered_peers()
         return {}
@@ -302,60 +230,33 @@ class ChatController:
         return self.node.identity_manager.get_fingerprint()
 
     def get_trust_state(self, peer_id: str) -> str:
-        """Return the current TOFU trust state for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            One of the TrustState constants.
-        """
+        """Return the current TOFU trust state for peer_id."""
         if self.node is None:
             return TrustState.NEW
         return self.node.get_trust_state(peer_id)
 
     def trust_peer(self, peer_id: str) -> None:
-        """Mark *peer_id* as TRUSTED in the trust store.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Mark peer_id as TRUSTED in the trust store."""
         if self.node is not None:
-            ok = self.node.trust_peer(peer_id)
-            if not ok:
-                self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
+            self._apply_trust_action(self.node.trust_peer, peer_id)
 
     def block_peer(self, peer_id: str) -> None:
-        """Mark *peer_id* as BLOCKED and disconnect any active session.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Mark peer_id as BLOCKED and disconnect any active session."""
         if self.node is not None:
-            ok = self.node.block_peer(peer_id)
-            if not ok:
-                self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
+            self._apply_trust_action(self.node.block_peer, peer_id)
 
     def unblock_peer(self, peer_id: str) -> None:
-        """Remove BLOCKED state from *peer_id* (restore to TRUSTED).
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Remove BLOCKED state from peer_id (restore to TRUSTED)."""
         if self.node is not None:
-            ok = self.node.unblock_peer(peer_id)
-            if not ok:
-                self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
+            self._apply_trust_action(self.node.unblock_peer, peer_id)
+
+    def _apply_trust_action(self, action: Callable[[str], bool], peer_id: str) -> None:
+        """Run a node trust action and report to on_system if peer_id was unknown."""
+        if not action(peer_id):
+            self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
 
     def get_peer_info(self, peer_id: str) -> Optional[dict]:
-        """Return the peer info dict for *peer_id*, or None if unknown.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-
-        Returns:
-            Peer info dict or None.
-        """
+        """Return the peer info dict for peer_id, or None if unknown."""
         return self.get_discovered_peers().get(peer_id)
 
     # ------------------------------------------------------------------ #
@@ -363,12 +264,7 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def register_peer_tcp(self, peer_id: str, tcp_addr: str) -> None:
-        """Register a bidirectional peer_id ↔ tcp_address mapping.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            tcp_addr: "IP:PORT" TCP address string.
-        """
+        """Register a bidirectional peer_id <-> tcp_address mapping."""
         with self._map_lock:
             self._peer_to_tcp[peer_id]  = tcp_addr
             self._tcp_to_peer[tcp_addr] = peer_id
@@ -416,16 +312,10 @@ class ChatController:
         self._current_peer_id = peer_id
 
     def get_peer_id_for_tcp(self, tcp_addr: str) -> Optional[str]:
-        """Return the peer_id registered for *tcp_addr*, or None.
+        """Return the peer_id registered for tcp_addr, or None.
 
-        Public accessor used by the GUI to resolve tcp_addr → peer_id during
-        disconnect events, avoiding direct access to the internal mapping.
-
-        Args:
-            tcp_addr: "IP:PORT" TCP address string.
-
-        Returns:
-            SHA-256 peer identifier, or None if not registered.
+        Public accessor so the GUI can resolve tcp_addr -> peer_id on
+        disconnect events without reaching into the internal mapping.
         """
         with self._map_lock:
             return self._tcp_to_peer.get(tcp_addr)
@@ -444,21 +334,11 @@ class ChatController:
             logger.exception("Controller callback raised an exception")
 
     def _on_message(self, peer_id: str, sender: str, payload: str) -> None:
-        """Forward an inbound message (routed by peer_id) to the app callback.
-
-        Args:
-            peer_id: SHA-256 identifier of the sending peer (for routing).
-            sender: Display username of the sender.
-            payload: Decrypted plaintext message body.
-        """
+        """Forward an inbound message (routed by peer_id) to the app callback."""
         self._safe_fire(self.on_message, peer_id, sender, payload)
 
     def _on_connected(self, peer_id: str, tcp_addr: str) -> None:
-        """Node fires on_connected with (peer_id, tcp_addr); register mapping and notify GUI.
-
-        The node now provides peer_id directly, eliminating the need for the
-        brittle reverse-lookup that used to fail when ephemeral ports were involved.
-        """
+        """Register the peer_id/tcp_addr mapping and notify the GUI."""
         if peer_id and tcp_addr:
             self.register_peer_tcp(peer_id, tcp_addr)
         self._safe_fire(self.on_connected, peer_id, tcp_addr)

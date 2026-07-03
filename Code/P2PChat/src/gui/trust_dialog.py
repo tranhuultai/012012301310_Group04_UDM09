@@ -33,16 +33,8 @@ class TrustDialog(ctk.CTkToplevel):
         peer_info: dict,
         callback=None,
     ) -> None:
-        """Show the dialog.
-
-        Args:
-            master: Parent Tk widget (root window or top-level).
-            mode: "new_peer" or "warning".
-            peer_info: Dict with peer identity fields.  For "warning" mode
-                must also contain known_fingerprint and
-                current_fingerprint.
-            callback: Called with the result string when the user acts.
-        """
+        """Show the dialog. mode is "new_peer" or "warning" — "warning" mode
+        expects peer_info to also carry known_fingerprint and current_fingerprint."""
         super().__init__(master)
         self.mode      = mode
         self.peer_info = peer_info
@@ -182,11 +174,7 @@ class TrustDialog(ctk.CTkToplevel):
         ).grid(row=0, column=1, sticky="w", padx=(6, 10), pady=8)
 
     def _button_row(self, *buttons: tuple) -> None:
-        """Render a row of action buttons.
-
-        Args:
-            buttons: Each item is (label, result, text_color, fg_color).
-        """
+        """Render a row of buttons; each is (label, result, text_color, fg_color)."""
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(pady=16)
         for text, result, tc, fg in buttons:
@@ -214,11 +202,7 @@ class TrustDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------ #
 
     def _fire(self, result: str) -> None:
-        """Call the callback with *result* and close the dialog.
-
-        Args:
-            result: One of "trust", "block", "skip", "update".
-        """
+        """Call the callback with result and close the dialog."""
         try:
             self.grab_release()
         except tk.TclError:

@@ -33,11 +33,7 @@ class ContactBook:
     # ------------------------------------------------------------------ #
 
     def load_contacts(self) -> dict:
-        """Load contacts from disk and return them.
-
-        Returns:
-            Dict mapping peer_id → contact record.
-        """
+        """Load contacts from disk and return the peer_id -> record dict."""
         self.contacts = StorageManager.load_json(self.contacts_file, {})
         return self.contacts
 
@@ -56,14 +52,7 @@ class ContactBook:
         trust_state: str,
         fingerprint: str,
     ) -> None:
-        """Add or overwrite a contact record for *peer_id*.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            alias: Human-readable display name.
-            trust_state: One of the TrustState constants.
-            fingerprint: Colon-separated hex fingerprint.
-        """
+        """Add or overwrite the contact record for peer_id."""
         self.contacts[peer_id] = {
             "peer_id":     peer_id,
             "alias":       alias,
@@ -73,21 +62,13 @@ class ContactBook:
         self.save_contacts()
 
     def remove_contact(self, peer_id: str) -> None:
-        """Remove the contact for *peer_id*, if it exists.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Remove the contact for peer_id, if it exists."""
         if peer_id in self.contacts:
             del self.contacts[peer_id]
             self.save_contacts()
 
     def get_contact(self, peer_id: str) -> dict | None:
-        """Return the contact record for *peer_id*, or None.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Return the contact record for peer_id, or None."""
         return self.contacts.get(peer_id)
 
     def get_all_contacts(self) -> list[dict]:
@@ -101,16 +82,7 @@ class ContactBook:
         trust_state: str | None = None,
         fingerprint: str | None = None,
     ) -> None:
-        """Partially update an existing contact.
-
-        Only non-None keyword arguments are applied.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            alias: New display name, or None to leave unchanged.
-            trust_state: New trust state, or None to leave unchanged.
-            fingerprint: New fingerprint, or None to leave unchanged.
-        """
+        """Update only the given fields of an existing contact; None means unchanged."""
         contact = self.contacts.get(peer_id)
         if not contact:
             return

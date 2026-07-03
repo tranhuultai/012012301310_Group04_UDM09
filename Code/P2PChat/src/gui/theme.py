@@ -112,5 +112,5 @@ FONT_MONO_S = (FONT_MONO, 9)
 
 
 def avatar_color(name: str) -> str:
-    """Return a stable avatar colour for *name*."""
+    """Return a stable avatar colour for name."""
     return AVATAR_PALETTE[sum(ord(c) for c in name) % len(AVATAR_PALETTE)]

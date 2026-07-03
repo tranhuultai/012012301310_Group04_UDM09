@@ -17,17 +17,7 @@ class JWTHandler:
         fingerprint: str,
         private_key_pem: str,
     ) -> str:
-        """Create a signed RS256 identity token.
-
-        Args:
-            peer_id: SHA-256 hash of the public key.
-            username: Human-readable display name.
-            fingerprint: Colon-separated hex fingerprint of the public key.
-            private_key_pem: PEM-encoded RSA private key for signing.
-
-        Returns:
-            Signed JWT string.
-        """
+        """Create a signed RS256 identity token for the given peer identity."""
         now = datetime.now(timezone.utc)
         payload = {
             "peer_id":     peer_id,
@@ -40,15 +30,7 @@ class JWTHandler:
 
     @staticmethod
     def verify_identity_token(token: str, public_key_pem: str) -> dict | None:
-        """Verify a signed RS256 identity token.
-
-        Args:
-            token: JWT string to verify.
-            public_key_pem: PEM-encoded RSA public key of the signer.
-
-        Returns:
-            Decoded claims dict, or None if verification fails.
-        """
+        """Verify a signed RS256 identity token, returning its claims or None."""
         try:
             return jwt.decode(token, public_key_pem, algorithms=["RS256"])
         except jwt.InvalidTokenError:

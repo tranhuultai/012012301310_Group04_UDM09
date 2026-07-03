@@ -9,8 +9,6 @@ from trust.trust_state import TrustState
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA = {"fingerprint": str, "trust_state": str}
-
 
 class TrustStore:
     """Thread-safe JSON-backed store for peer trust records.
@@ -26,15 +24,11 @@ class TrustStore:
     """
 
     def __init__(self, profile: str = "known_peers") -> None:
-        """Initialise and load the trust store from disk.
+        """Load the trust store from data/trust/<profile>.json.
 
-        Args:
-            profile: File stem under data/trust/ — pass a per-port value
-                (e.g. "known_peers_13001") when running multiple local
-                instances from the same working directory, otherwise their
-                writes to the same known_peers.json race each other
-                (observed as "Access is denied" on the .tmp-file rename and
-                a corrupted store on the next load).
+        Pass a per-port profile when running multiple local instances —
+        otherwise their writes race on the same file (Windows rejects the
+        .tmp-file rename with "Access is denied", corrupting the store).
         """
         self._data_dir   = Path("data/trust")
         self._store_file = self._data_dir / f"{profile}.json"
@@ -94,11 +88,7 @@ class TrustStore:
         ).start()
 
     def _write_snapshot(self, snapshot: dict) -> None:
-        """Atomically write *snapshot* to disk (runs in a background thread).
-
-        Args:
-            snapshot: Copy of the peers dict taken while the lock was held.
-        """
+        """Atomically write snapshot to disk (runs in a background thread)."""
         tmp = self._store_file.with_suffix(".tmp")
         with self._write_lock:
             try:
@@ -123,13 +113,7 @@ class TrustStore:
             return dict(rec) if rec else None
 
     def add_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
-        """Insert a new peer record (overwrites if already exists).
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            fingerprint: Colon-separated hex fingerprint.
-            trust_state: One of the TrustState constants.
-        """
+        """Insert a new peer record (overwrites if already exists)."""
         with self._lock:
             self._peers[peer_id] = {
                 "fingerprint": fingerprint,
@@ -138,13 +122,7 @@ class TrustStore:
             self._save()
 
     def update_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
-        """Update an existing peer record.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-            fingerprint: New fingerprint value.
-            trust_state: New trust state.
-        """
+        """Update an existing peer record."""
         with self._lock:
             self._peers[peer_id] = {
                 "fingerprint": fingerprint,
@@ -153,11 +131,7 @@ class TrustStore:
             self._save()
 
     def remove_peer(self, peer_id: str) -> None:
-        """Remove a peer from the store, if present.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Remove a peer from the store, if present."""
         with self._lock:
             if peer_id in self._peers:
                 del self._peers[peer_id]
@@ -169,11 +143,7 @@ class TrustStore:
             return {pid: dict(rec) for pid, rec in self._peers.items()}
 
     def is_blocked(self, peer_id: str) -> bool:
-        """Return True if *peer_id* is explicitly BLOCKED.
-
-        Args:
-            peer_id: SHA-256 peer identifier.
-        """
+        """Return True if peer_id is explicitly BLOCKED."""
         with self._lock:
             rec = self._peers.get(peer_id)
             return bool(rec and rec.get("trust_state") == TrustState.BLOCKED)

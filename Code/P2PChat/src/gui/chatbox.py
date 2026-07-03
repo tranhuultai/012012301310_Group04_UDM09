@@ -162,13 +162,7 @@ class ChatBox(ctk.CTkFrame):
     # ── Public API ────────────────────────────────────────────────────
 
     def add_sent(self, sender: str, _recipient: str, message: str) -> None:
-        """Append an outbound bubble.
-
-        Args:
-            sender: Local display name.
-            _recipient: Unused — kept for API compatibility.
-            message: Plaintext body.
-        """
+        """Append an outbound bubble (_recipient unused, kept for API compatibility)."""
         self._maybe_date_divider()
         key = (True, sender)
         item = _MsgItem(kind="bubble", tag=self._new_tag(), is_me=True,
@@ -179,12 +173,7 @@ class ChatBox(ctk.CTkFrame):
         self._request_relayout()
 
     def add_received(self, sender: str, message: str) -> None:
-        """Append an inbound bubble.
-
-        Args:
-            sender: Remote peer display name.
-            message: Plaintext body.
-        """
+        """Append an inbound bubble."""
         self._maybe_date_divider()
         key = (False, sender)
         item = _MsgItem(kind="bubble", tag=self._new_tag(), is_me=False,
@@ -202,13 +191,7 @@ class ChatBox(ctk.CTkFrame):
         self._request_relayout()
 
     def add_file_sent(self, sender: str, filename: str, size_str: str) -> None:
-        """Append a right-aligned sent-file card (no download button).
-
-        Args:
-            sender: Local display name (usually "Me").
-            filename: File name sent.
-            size_str: Pre-formatted size string.
-        """
+        """Append a right-aligned sent-file card (no download button)."""
         self._maybe_date_divider()
         self._last_msg_key = None   # breaks bubble grouping across the file card
 
@@ -238,14 +221,7 @@ class ChatBox(ctk.CTkFrame):
 
     def add_file_message(self, sender: str, filename: str,
                          size_str: str, on_download=None) -> None:
-        """Append a file-offer card with Download button.
-
-        Args:
-            sender: Display name of the file sender.
-            filename: File name to display.
-            size_str: Pre-formatted size string (e.g. "2.3 MB").
-            on_download: Called when the user clicks Download.
-        """
+        """Append a file-offer card with a Download button (calls on_download)."""
         self._maybe_date_divider()
         self._last_msg_key = None   # breaks bubble grouping across the file card
 

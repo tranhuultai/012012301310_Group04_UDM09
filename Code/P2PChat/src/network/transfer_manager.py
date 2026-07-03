@@ -133,17 +133,12 @@ class TransferManager:
         on_transfer_complete: Optional[Callable] = None,
         on_file_meta:         Optional[Callable] = None,
     ) -> None:
-        """Initialise and wire the node's on_file_packet hook.
+        """Wire the node's on_file_packet hook. Callback signatures:
 
-        Args:
-            node: The running P2PNode instance.
-            controller: ChatController (for tcp address lookup).
-            schedule_gui: A fn → None that schedules *fn* on the Tk thread.
-            on_transfer_started: (tid, filename, peer_name, direction)
-            on_transfer_progress: (tid, fraction) — fraction in [0, 1].
-            on_transfer_complete: (tid, success, message) — success=False for errors.
-            on_file_meta: (meta: TransferMeta, peer_name: str) — called when
-                the receiver gets a FILE_META and should show a Download button.
+        on_transfer_started(tid, filename, peer_name, direction)
+        on_transfer_progress(tid, fraction)           fraction in [0, 1]
+        on_transfer_complete(tid, success, message)   success=False for errors
+        on_file_meta(meta: TransferMeta, peer_name)   receiver got FILE_META, show Download
         """
         self._node         = node
         self._ctrl         = controller
@@ -169,15 +164,10 @@ class TransferManager:
     # ------------------------------------------------------------------ #
 
     def send_file(self, filepath: str, peer_id: str) -> tuple[bool, str]:
-        """Validate *filepath* and send FILE_META to *peer_id*.
+        """Validate filepath and send FILE_META to peer_id.
 
-        Args:
-            filepath: Absolute or relative path to the file to send.
-            peer_id: SHA-256 identifier of the destination peer.
-
-        Returns:
-            (True, transfer_id) if meta was sent, (False, error_msg)
-            if validation failed or peer is not connected.
+        Returns (True, transfer_id) on success, (False, error_message) if
+        validation failed or the peer isn't connected.
         """
         path = Path(filepath)
         ext  = path.suffix.lower()
@@ -232,11 +222,7 @@ class TransferManager:
         return True, tid
 
     def cancel_transfer(self, transfer_id: str) -> None:
-        """Cancel an in-progress transfer (sender or receiver side).
-
-        Args:
-            transfer_id: The transfer to cancel.
-        """
+        """Cancel an in-progress transfer, sender or receiver side."""
         with self._lock:
             entry = self._transfers.get(transfer_id)
         if entry is None:
@@ -249,16 +235,7 @@ class TransferManager:
         logger.info("[TRANSFER] Cancelled tid=%s", transfer_id[:8])
 
     def request_download(self, transfer_id: str) -> bool:
-        """Send DOWNLOAD_REQUEST for *transfer_id* (receiver side).
-
-        Called when the user clicks the Download button.
-
-        Args:
-            transfer_id: The transfer to start downloading.
-
-        Returns:
-            True if the request was sent.
-        """
+        """Send DOWNLOAD_REQUEST for transfer_id (receiver side, on Download click)."""
         with self._lock:
             entry = self._transfers.get(transfer_id)
         if entry is None:
@@ -276,14 +253,9 @@ class TransferManager:
 
     def _on_file_packet(self, packet: dict, crypto: Optional[CryptoHandler],
                         sender_pid: str) -> None:
-        """Dispatch an inbound file-transfer packet to the correct handler.
+        """Dispatch an inbound file-transfer packet to its handler.
 
-        This is called by P2PNode on the receive thread — must return quickly.
-
-        Args:
-            packet: Parsed packet dict from the network.
-            crypto: Active Fernet session or None.
-            sender_pid: SHA-256 peer_id of the sender.
+        Called by P2PNode on the receive thread — must return quickly.
         """
         ptype = packet.get("type")
         try:
@@ -654,7 +626,7 @@ class TransferManager:
         self._schedule_gui(_gui)
 
     def _cleanup_recv(self, tid: Optional[str]) -> None:
-        """Close and optionally remove the .part file for a failed receive."""
+        """Close the .part file handle for a failed/cancelled receive (file is kept)."""
         if tid is None:
             return
         with self._lock:
@@ -678,17 +650,8 @@ class TransferManager:
         self._node.send_raw_packet(pkt, tcp_addr)
 
     def _safe_save_path(self, filename: str) -> Path:
-        """Return a non-colliding save path under FILE_DOWNLOAD_DIR.
-
-        If downloads/report.pdf already exists, tries
-        downloads/report_1.pdf, downloads/report_2.pdf, …
-
-        Args:
-            filename: Base filename from the transfer metadata.
-
-        Returns:
-            A Path object guaranteed not to exist at call time.
-        """
+        """Return a save path under FILE_DOWNLOAD_DIR that doesn't exist yet —
+        report.pdf, report_1.pdf, report_2.pdf, ... on collision."""
         base     = Path(FILE_DOWNLOAD_DIR)
         stem     = Path(filename).stem
         suffix   = Path(filename).suffix

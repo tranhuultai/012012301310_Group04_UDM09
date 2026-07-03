@@ -10,18 +10,15 @@ class RSAUtils:
     @staticmethod
     def generate_key_pair() -> tuple:
         """Generate and return a new (private_key, public_key) RSA-2048 pair."""
-
         private_key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=2048,
         )
-
         return private_key, private_key.public_key()
 
     @staticmethod
     def serialize_public_key(public_key) -> str:
         """Serialize *public_key* to a PEM-encoded string."""
-
         return public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -30,7 +27,6 @@ class RSAUtils:
     @staticmethod
     def load_public_key(public_key_string: str):
         """Deserialize a PEM-encoded public key string."""
-
         return serialization.load_pem_public_key(public_key_string.encode())
 
     @staticmethod
@@ -59,9 +55,7 @@ class RSAUtils:
         )
 
     @staticmethod
-    def serialize_private_key(
-        private_key
-    ) -> str:
+    def serialize_private_key(private_key) -> str:
         """Serialize *private_key* to a PEM-encoded string."""
         return private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -72,7 +66,6 @@ class RSAUtils:
     @staticmethod
     def load_private_key(private_key_string: str):
         """Deserialize a PEM-encoded private key string."""
-
         return serialization.load_pem_private_key(
             private_key_string.encode(),
             password=None
