@@ -199,3 +199,31 @@ def test_stop_without_start():
     discovery.stop()
 
     assert discovery.running is False
+
+
+def test_listen_loop_ignores_non_dict_json():
+    """A UDP payload that's valid JSON but not an object (e.g. "null",
+    a bare number, or a list) used to reach _handle_packet, which calls
+    packet.get(...) — raising an uncaught AttributeError that propagated
+    out of this loop and killed discovery for the rest of the process.
+    The loop must now skip it and keep running."""
+
+    discovery = create_discovery()
+    discovery.running = True
+    discovery._handle_packet = MagicMock()
+
+    call_count = {"n": 0}
+
+    class FakeUdpSocket:
+        def recvfrom(self, bufsize):  # pylint: disable=unused-argument
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return (b"null", ("127.0.0.1", 5000))
+            discovery.running = False
+            raise OSError("stop test loop")
+
+    discovery._listen_sock = FakeUdpSocket()
+
+    discovery._listen_loop()  # must return normally, not raise
+
+    discovery._handle_packet.assert_not_called()

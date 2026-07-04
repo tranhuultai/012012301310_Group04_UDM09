@@ -1,6 +1,7 @@
 """P2PNode: TCP server, handshake, session management, and message routing."""
 
 import collections
+import datetime
 import logging
 import socket
 import threading
@@ -15,7 +16,7 @@ from identity.identity_manager import generate_peer_id
 from message.protocol import PacketType, ProtocolHandler
 from network.discovery import DiscoveryService, PEER_TIMEOUT
 from trust.tofu_engine import TOFUEngine
-from config import SOCKET_TIMEOUT, DEFAULT_LISTEN_PORT
+from config import SOCKET_TIMEOUT, DEFAULT_LISTEN_PORT, MAX_PACKET_SIZE, PROTOCOL_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,24 @@ _RECV_TIMEOUT  = 45   # per-socket read timeout (catches stalled peers)
 _PING_INTERVAL = 15   # heartbeat period; comfortably under _RECV_TIMEOUT
 _AddressMap       = dict[int, str]  # id(socket) -> "IP:PORT"
 _SEEN_MSG_MAX     = 4096  # max message IDs in the deque (FIFO eviction)
+
+# Bounded retry for the initial TCP connect() only — a transient LAN hiccup
+# or a peer mid-restart looks identical to "not there" on a single attempt.
+# connect_to_peer() always runs off a background thread (see gui/app.py's
+# Connect handlers), so the sleep()s here never block the GUI.
+_CONNECT_RETRIES          = 3   # total attempts, including the first
+_CONNECT_RETRY_BASE_DELAY = 1   # seconds; doubles each retry: 1s, 2s
+
+# Generous per-peer cap, not a strict chat-pacing limiter — just enough to
+# stop a buggy or malicious peer from flooding MESSAGE packets fast enough
+# to overrun the GUI's bounded _msg_queue (see gui/app.py).
+_MSG_RATE_LIMIT_WINDOW = 1.0   # seconds
+_MSG_RATE_LIMIT_MAX    = 30    # max messages per peer per window
+
+# Second line of defense against replay, independent of _seen_msg_deque's
+# fixed size: a message evicted from that bounded FIFO after _SEEN_MSG_MAX
+# newer messages would otherwise be accepted again if resent verbatim.
+_MAX_MESSAGE_AGE_SECONDS = 300  # 5 min — generous enough to tolerate clock skew
 
 
 class P2PNode:
@@ -110,6 +129,12 @@ class P2PNode:
         self._seen_msg_deque: collections.deque = collections.deque(maxlen=_SEEN_MSG_MAX)
         self._seen_msg_set:   set[str]          = set()
         self._seen_lock = threading.Lock()
+
+        # Per-peer message rate limiting: tcp_addr -> deque of recent send
+        # timestamps (see _check_rate_limit / _MSG_RATE_LIMIT_*). A leaf
+        # lock — never held while acquiring peers_lock or discovery_lock.
+        self._msg_timestamps: dict[str, collections.deque] = {}
+        self._msg_rate_lock = threading.Lock()
 
         # Discovery registry, keyed by peer_id.
         self.discovery_lock    = threading.RLock()
@@ -193,6 +218,41 @@ class P2PNode:
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
+    def _dial_with_retry(self, host: str, port: int) -> socket.socket | None:
+        """Attempt TCP connect() to host:port up to _CONNECT_RETRIES times
+        with exponential backoff; return the connected socket or None.
+
+        Split out of connect_to_peer() so that method's own branch/return
+        count doesn't grow with the retry loop (pylint too-many-branches /
+        too-many-return-statements) — this loop is also independently
+        testable in isolation from the registration/handshake steps.
+        """
+        tcp_addr = f"{host}:{port}"
+        sock: socket.socket | None = None
+        last_exc: OSError | None = None
+        for attempt in range(1, _CONNECT_RETRIES + 1):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10)            # TCP connect timeout
+                sock.connect((host, port))
+                return sock
+            except OSError as exc:
+                last_exc = exc
+                if sock is not None:
+                    sock.close()
+                sock = None
+                if attempt < _CONNECT_RETRIES:
+                    delay = _CONNECT_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        "[NODE] Connect attempt %d/%d to %s failed (%s) — retrying in %ds",
+                        attempt, _CONNECT_RETRIES, tcp_addr, exc, delay,
+                    )
+                    time.sleep(delay)
+
+        logger.error("[NODE] Connect failed %s after %d attempts: %s",
+                      tcp_addr, _CONNECT_RETRIES, last_exc)
+        return None
+
     def connect_to_peer(self, host: str, port: int) -> bool:
         """Dial host:port and start the handshake; False if already connected."""
         tcp_addr = f"{host}:{port}"
@@ -225,10 +285,14 @@ class P2PNode:
                                     target_pid[:12])
                         return False
 
+        # connect_to_peer() always runs off the GUI thread (see gui/app.py's
+        # Connect handlers), so the backoff sleeps inside _dial_with_retry
+        # never freeze the UI.
+        sock = self._dial_with_retry(host, port)
+        if sock is None:
+            return False
+
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10)            # TCP connect timeout
-            sock.connect((host, port))
             # Keep a modest per-recv timeout so a stalled peer cannot block
             # the receive thread indefinitely.
             sock.settimeout(_RECV_TIMEOUT)
@@ -246,7 +310,7 @@ class P2PNode:
             return True
 
         except OSError as exc:
-            logger.error("[NODE] Connect failed %s: %s", tcp_addr, exc)
+            logger.error("[NODE] Post-connect setup failed %s: %s", tcp_addr, exc)
             return False
 
     def send_message(self, message: str, tcp_addr: str) -> bool:
@@ -264,7 +328,24 @@ class P2PNode:
             packet = self.protocol_handler.create_packet(
                 PacketType.MESSAGE, self.username, message, crypto=crypto,
             )
-            sock.sendall(self.protocol_handler.serialize(packet))
+            data = self.protocol_handler.serialize(packet)
+
+            # Enforce the same ceiling the *receiver* applies in
+            # protocol.py's receive_packet(). Without this check sendall()
+            # below succeeds locally — TCP itself has no size opinion —
+            # while the remote side silently discards the oversized packet
+            # on arrival, so the sender believed the message went through
+            # when it never did. Returning False here lets the caller
+            # (controllers/controller.py -> gui/app.py) surface a real error
+            # instead of a false "sent" state.
+            if len(data) > MAX_PACKET_SIZE:
+                logger.warning(
+                    "[NODE] Message too large to send (%d bytes > %d limit) to %s",
+                    len(data), MAX_PACKET_SIZE, tcp_addr,
+                )
+                return False
+
+            sock.sendall(data)
             return True
         except OSError as exc:
             logger.error("[NODE] Send failed: %s", exc)
@@ -478,6 +559,20 @@ class P2PNode:
         if tcp_addr is None:
             return
 
+        # "version" is a required field (see message/protocol.py's
+        # _HANDSHAKE_REQUIRED) but its *value* was never compared against
+        # anything — two builds with diverging packet formats could still
+        # "handshake" successfully. Reject a mismatch instead of assuming
+        # compatibility; both sides currently send config.PROTOCOL_VERSION.
+        incoming_version = packet.get("version")
+        if incoming_version != PROTOCOL_VERSION:
+            logger.warning(
+                "[NODE] Protocol version mismatch from %s: got %r, expected %r",
+                tcp_addr, incoming_version, PROTOCOL_VERSION,
+            )
+            self._remove_peer(peer_socket)
+            return
+
         raw_pub_key = packet.get("public_key", "")
         try:
             RSAUtils.load_public_key(raw_pub_key)
@@ -573,6 +668,8 @@ class P2PNode:
             return
 
         peer_id = ""
+        old_sock: socket.socket | None = None
+        old_addr: str | None = None
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             if session is None:
@@ -582,32 +679,86 @@ class P2PNode:
             # Guard against duplicate active sessions for the same peer_id.
             # This can happen when both sides press Connect at the same time:
             # both handshakes complete and both try to become "active".
-            # Close the older session before activating this one.
+            # We only *identify* the older session here — see below for why
+            # closing it happens after this lock is released.
             if peer_id:
                 for addr, existing_sess in list(self.peer_sessions.items()):
                     if (addr != tcp_addr
                             and existing_sess.get("peer_id") == peer_id
                             and existing_sess.get("state") == "active"):
-                        logger.info(
-                            "[NODE] Duplicate session for %s — closing older %s",
-                            peer_id[:12], addr,
-                        )
-                        old_sock = self.peers.get(addr)
-                        if old_sock:
-                            # Schedule removal outside the lock to avoid deadlock.
-                            threading.Thread(
-                                target=self._remove_peer, args=(old_sock,),
-                                daemon=True, name="DupSessionCleanup",
-                            ).start()
+                        old_sock, old_addr = self.peers.get(addr), addr
                         break
 
             session["crypto"] = crypto
             session["state"]  = "active"
 
+        # Close the older session synchronously, on this same thread, right
+        # after releasing peers_lock — NOT inside the "with" block above.
+        # _remove_peer() re-acquires peers_lock itself (RLock, so nesting
+        # would technically be legal), but every other lock use in this file
+        # is non-nested (peers_lock and discovery_lock are never held at the
+        # same time — verified across the whole module), and this keeps that
+        # invariant intact rather than introducing the first exception.
+        # A window where both sessions briefly read as "active" still exists
+        # between this line and _remove_peer() completing, but it's now
+        # bounded by a single synchronous call on this thread instead of by
+        # OS thread-scheduling latency for a freshly spawned "cleanup"
+        # thread — the old approach could leave both sessions active for
+        # however long the scheduler took to run that thread.
+        if old_sock is not None:
+            logger.info(
+                "[NODE] Duplicate session for %s — closing older %s",
+                peer_id[:12], old_addr,
+            )
+            self._remove_peer(old_sock)
+
         self._sync_discovery_on_connect(peer_id, tcp_addr)
         logger.info("[NODE] Session active: %s (peer: %s)",
                     tcp_addr, peer_id[:12] if peer_id else "?")
         self._fire_callback(self.on_connected, peer_id, tcp_addr)
+
+    def _check_rate_limit(self, tcp_addr: str) -> bool:
+        """Return False once tcp_addr exceeds _MSG_RATE_LIMIT_MAX messages
+        within the trailing _MSG_RATE_LIMIT_WINDOW seconds.
+
+        Sliding window via a per-peer deque of send timestamps — old entries
+        age out on their own, so there's no separate cleanup pass needed
+        while the peer stays connected (the deque itself is dropped in
+        _remove_peer when the peer disconnects).
+        """
+        now = time.time()
+        with self._msg_rate_lock:
+            timestamps = self._msg_timestamps.setdefault(tcp_addr, collections.deque())
+            while timestamps and now - timestamps[0] > _MSG_RATE_LIMIT_WINDOW:
+                timestamps.popleft()
+            if len(timestamps) >= _MSG_RATE_LIMIT_MAX:
+                return False
+            timestamps.append(now)
+            return True
+
+    def _is_message_stale(self, packet: dict) -> bool:
+        """Return True if packet's timestamp is missing/malformed or older
+        than _MAX_MESSAGE_AGE_SECONDS.
+
+        Split out of _handle_message() for the same reason as
+        _check_rate_limit: keeps that method's own branch/return count from
+        growing with each new guard clause. A malformed timestamp is
+        treated as stale (rejected) rather than accepted — validate_packet()
+        already guarantees "timestamp" is present and a string, so a value
+        that still fails to parse indicates a packet that doesn't actually
+        match this protocol's format.
+        """
+        message_id = packet.get("message_id", "")[:8]
+        try:
+            msg_time = datetime.datetime.fromisoformat(packet["timestamp"])
+        except (ValueError, TypeError):
+            logger.warning("[NODE] Malformed timestamp — dropping message %s", message_id)
+            return True
+        age = (datetime.datetime.now(datetime.timezone.utc) - msg_time).total_seconds()
+        if age > _MAX_MESSAGE_AGE_SECONDS:
+            logger.debug("[NODE] Stale message dropped (age=%.0fs): %s", age, message_id)
+            return True
+        return False
 
     def _handle_message(self, packet: dict, peer_socket: socket.socket) -> None:
         tcp_addr = self._get_tcp_addr(peer_socket)
@@ -628,10 +779,17 @@ class P2PNode:
         if session_state != "active":
             return
 
+        if not self._check_rate_limit(tcp_addr):
+            logger.warning("[NODE] Rate limit exceeded for %s — message dropped", tcp_addr)
+            return
+
         if not self.protocol_handler.validate_packet(packet):
             return
 
         message_id = packet["message_id"]
+
+        if self._is_message_stale(packet):
+            return
 
         # Replay-attack check using a bounded FIFO structure.
         # deque(maxlen=N) automatically discards the oldest entry when full,
@@ -822,6 +980,10 @@ class P2PNode:
             pass
 
         if tcp_addr is not None:
+            with self._msg_rate_lock:
+                self._msg_timestamps.pop(tcp_addr, None)
+
+        if tcp_addr is not None:
             with self.discovery_lock:
                 # Prefer peer_id lookup (reliable even when tcp_addr is ephemeral).
                 target = (
@@ -852,7 +1014,7 @@ class P2PNode:
         packet = {
             "type":        PacketType.HANDSHAKE,
             "username":    self.username,
-            "version":     "1.0",
+            "version":     PROTOCOL_VERSION,
             "listen_port": self.port,
             "public_key":  RSAUtils.serialize_public_key(self.public_key),
         }

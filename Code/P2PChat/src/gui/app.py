@@ -221,13 +221,24 @@ class ChatApp(ctk.CTk):
         # Persist received message immediately (happens on the callback thread,
         # before marshalling to Tk — avoids losing messages if the UI thread
         # is busy). append_message does an atomic write, safe from any thread.
-        self.controller.message_history.append_message(peer_id, {
-            "message_id": str(uuid.uuid4()),
-            "peer_id":    peer_id,
-            "direction":  "received",
-            "content":    payload,
-            "timestamp":  time.time(),
-        })
+        #
+        # Wrapped in try/except: without it, a disk error here (full disk,
+        # permissions) would raise and abort this whole method *before* the
+        # _msg_queue.append below ran — so the message would disappear from
+        # the GUI too, not just fail to persist, and the only trace would be
+        # a logged exception the user never sees.
+        try:
+            self.controller.message_history.append_message(peer_id, {
+                "message_id": str(uuid.uuid4()),
+                "peer_id":    peer_id,
+                "direction":  "received",
+                "content":    payload,
+                "timestamp":  time.time(),
+            })
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("[APP] Failed to persist message from %s: %s", peer_id[:12], exc)
+            self.after(0, lambda: self._toast_show(
+                "⚠  A message arrived but could not be saved to disk", T.DANGER))
 
         # Enqueue and let the batch drain handle rendering. `deque.append` is
         # thread-safe on its own (network thread here, Tk thread in
@@ -765,7 +776,15 @@ class ChatApp(ctk.CTk):
             self.main_window.clear_message_text()
             self._schedule_peers_redraw()
         else:
-            self._toast_show("⚠  Not connected — press Connect first.", T.DANGER)
+            # node.send_message() returns False for more than one reason
+            # (peer not active, or the message exceeded MAX_PACKET_SIZE —
+            # see network/node.py) and doesn't currently report which, so
+            # the toast stays deliberately non-specific rather than assert
+            # a cause we haven't actually confirmed.
+            self._toast_show(
+                "⚠  Message not sent — check connection, or message may be too long.",
+                T.DANGER,
+            )
 
     # ------------------------------------------------------------------ #
     # Helpers                                                              #

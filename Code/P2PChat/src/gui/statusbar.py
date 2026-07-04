@@ -76,8 +76,10 @@ class StatusBar(ctk.CTkFrame):
     def set_encrypted(self, active: bool) -> None:
         """Toggle the encryption segment."""
         if active:
+            # Fernet (security/crypto.py) is AES-128-CBC + HMAC-SHA256, not
+            # AES-256 — this label previously overstated the cipher strength.
             self._enc_label.configure(
-                text="🔒  AES-256", text_color=T.SUCCESS)
+                text="🔒  AES-128", text_color=T.SUCCESS)
         else:
             self._enc_label.configure(
                 text="🔓  —", text_color=T.TEXT_MUTED)

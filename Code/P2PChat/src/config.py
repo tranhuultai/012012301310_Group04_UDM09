@@ -13,6 +13,13 @@ DISCOVERY_PORT = 15000
 
 MAX_PACKET_SIZE = 131072   # 128 KB — must fit one 64 KB file chunk after Fernet + Base64
 
+# Single source of truth for the handshake "version" field. Previously
+# hardcoded as a literal "1.0" string in node.py's _send_handshake and never
+# compared against on receipt, so two builds could silently "handshake" even
+# if their packet formats had diverged. Both sides now send this constant and
+# _handle_handshake rejects a mismatch instead of assuming compatibility.
+PROTOCOL_VERSION = "1.0"
+
 # =========================
 # File Transfer
 # =========================

@@ -175,6 +175,18 @@ class DiscoveryService:
             try:
                 data, address = sock.recvfrom(8192)
                 packet = json.loads(data.decode("utf-8"))
+                # json.loads succeeds on any valid JSON value, not just
+                # objects — a bare "null"/number/string/list from a
+                # malformed or hostile sender would otherwise reach
+                # _handle_packet's packet.get(...) and raise an uncaught
+                # AttributeError there, which (unlike the exceptions caught
+                # below) would propagate out of this loop and permanently
+                # kill discovery for this process. Mirrors the same check
+                # already done for the TCP path in protocol.py's receive_packet.
+                if not isinstance(packet, dict):
+                    logger.debug(
+                        "[DISCOVERY] Ignoring non-object UDP packet from %s", address[0])
+                    continue
                 self._handle_packet(packet, address)
             except socket.timeout:
                 continue

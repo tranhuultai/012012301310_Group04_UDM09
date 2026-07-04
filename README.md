@@ -50,7 +50,7 @@ Tin nhắn được mã hóa end-to-end: RSA-2048 để trao đổi khóa lúc k
 - Fernet: mã hóa toàn bộ tin nhắn và file trong session
 - JWT: xác thực gói UDP discovery, chống giả mạo
 - TOFU (Trust On First Use): lưu fingerprint RSA của peer, cảnh báo nếu key thay đổi
-- Chống replay attack: dùng `deque + set` để track message_id đã thấy
+- Chống replay attack: `deque + set` track message_id đã thấy, cộng thêm kiểm tra tuổi tin nhắn (>5 phút bị drop) để không phụ thuộc hoàn toàn vào kích thước cố định của deque
 
 ### File transfer
 
@@ -71,8 +71,16 @@ Tin nhắn được mã hóa end-to-end: RSA-2048 để trao đổi khóa lúc k
 ## Cài đặt
 
 ```bash
-pip install customtkinter cryptography PyJWT
+pip install -r requirements.txt
 ```
+
+Chỉ cần chạy app thì tối thiểu là:
+
+```bash
+pip install customtkinter cryptography PyJWT pywinstyles
+```
+
+`pywinstyles` chỉ dùng cho một fix cosmetic trên Windows (chống chớp màn hình đen khi resize cửa sổ) — thiếu nó app vẫn chạy bình thường, chỉ mất hiệu ứng đó.
 
 Yêu cầu Python 3.13 trở lên, Windows 10/11.
 
@@ -130,13 +138,13 @@ GUI (CustomTkinter)
 
 **Handshake 3 bước:**
 
-1. Peer A gửi `HELLO` kèm public key
-2. Peer B trả `HELLO_ACK` kèm public key của B và session key đã mã hóa bằng key của A
-3. Peer A giải mã lấy session key, gửi `SESSION_READY`
+1. Peer A (người bấm Connect) gửi `HANDSHAKE` kèm public key của A.
+2. Peer B nhận, trả `HANDSHAKE_ACK` kèm public key của B. ACK này **chưa có** session key.
+3. Peer A nhận ACK, tự tạo session key (Fernet), mã hóa bằng public key của B, gửi trong gói `SESSION_KEY`. Peer B giải mã bằng private key của B rồi kích hoạt session — không có bước ACK ngược lại, session coi như sẵn sàng ngay khi B giải mã thành công.
 
-Từ đó hai bên dùng session key (Fernet) để mã hóa mọi thứ.
+Nói cách khác: **bên chủ động Connect (A) luôn là bên tạo và gửi session key**, không phải bên nhận kết nối. Từ đó hai bên dùng session key (Fernet) để mã hóa mọi thứ.
 
-**UDP Discovery:** Mỗi 5 giây broadcast JWT lên port 15000, JWT chứa peer_id, username, IP, port. Peer khác nhận được thì verify JWT và cập nhật danh sách.
+**UDP Discovery:** Mỗi 5 giây broadcast một gói JSON lên port 15000, gồm `peer_id`, `username`, `fingerprint`, `public_key`, `port` ở dạng plaintext, cộng thêm một trường `identity_token` — đây mới là JWT (RS256, tự ký bằng private key của chính peer đó), chỉ chứa claim `peer_id`, `username`, `fingerprint`. Peer nhận verify chữ ký JWT bằng public key đi kèm trong cùng gói để xác nhận danh tính khớp với key, rồi mới cập nhật danh sách. Lưu ý: `port` không nằm trong JWT nên không được ký — đây là giới hạn đã biết của thiết kế hiện tại, không phải lỗi cần sửa trong Sprint 4.
 
 **File transfer:**
 
@@ -167,16 +175,17 @@ src/
 │   ├── trust_dialog.py        # TOFU dialog
 │   ├── statusbar.py
 │   ├── theme.py               # màu sắc, fonts
-│   └── ui_state.py
+│   ├── ui_state.py
+│   └── win_compat.py          # Windows-only cosmetic fix, no-op nếu thiếu pywinstyles
 ├── network/
-│   ├── node.py                # TCP server + handshake (1054 dòng, intentional)
+│   ├── node.py                # TCP server + handshake (~1180 dòng, intentional — session/handshake state machine, không tách nhỏ)
 │   ├── discovery.py
 │   ├── transfer_manager.py
 │   └── validation.py
 ├── controllers/
 │   └── controller.py          # adapter GUI ↔ Node
 ├── message/
-│   └── protocol.py            # 4-byte framing + 11 packet types
+│   └── protocol.py            # 4-byte framing + 14 packet types
 ├── identity/
 │   └── identity_manager.py    # RSA keypair, peer_id = SHA256(pubkey)
 ├── trust/
@@ -191,7 +200,7 @@ src/
 │   ├── message_history.py     # thread-safe với Lock
 │   └── storage_manager.py     # atomic write
 ├── downloads/
-└── test/                      # 187 unit tests
+└── test/                      # 200 unit tests
 ```
 
 ---
@@ -201,5 +210,7 @@ src/
 ```bash
 cd Code/P2PChat/src
 python -m pytest test/ --ignore=test/test_statusbar.py -q
-# 187 passed
+# 200 passed
 ```
+
+`test_statusbar.py` bị `--ignore` vì nó tạo một cửa sổ Tk thật (`ctk.CTk()`) để test — máy không có display (SSH/CI không có Xvfb) sẽ crash ngay ở bước tạo cửa sổ. Chạy riêng file đó (`pytest test/test_statusbar.py`) vẫn được nếu máy có display.
