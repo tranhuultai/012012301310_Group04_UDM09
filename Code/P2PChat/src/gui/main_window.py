@@ -173,10 +173,8 @@ class MainWindow(ctk.CTkFrame):
         self.send_button.grid(row=0, column=1, padx=(0, 8), pady=12)
 
         if on_broadcast:
-            # Was fg=BG_FIELD/hover=BORDER_LIGHT — both near-white and barely
-            # distinguishable from the input bar background, making the
-            # button look almost invisible. Use the same accent-tint family
-            # as the other icon buttons so it reads clearly as an action.
+            # Previous colors were near-white, nearly invisible against the
+            # input bar — use the same accent-tint family as other icons.
             ctk.CTkButton(
                 input_bar, text="📢", width=38, height=38, corner_radius=19,
                 fg_color=T.ACCENT_DIM, hover_color=T.ACCENT_GLOW,

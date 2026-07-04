@@ -17,12 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class ChatController:
-    """Thin wrapper around P2PNode that exposes a clean interface for the GUI.
-
-    Key design decision: the GUI works with **peer_id** (SHA-256 hash) for
-    display and selection, but all networking calls (send_message, connect)
-    use **tcp_address** ("IP:PORT"). This controller translates between them.
-    """
+    """Adapts P2PNode for the GUI: GUI uses peer_id, networking uses
+    tcp_address ("IP:PORT") — this class translates between them."""
 
     def __init__(
         self,
@@ -38,14 +34,8 @@ class ChatController:
         on_file_meta:         Optional[Callable] = None,
         schedule_gui:         Optional[Callable] = None,
     ) -> None:
-        """Wire GUI callback references. Signatures:
-
-        on_system(message), on_message(peer_id, sender, payload),
-        on_connected(peer_id, tcp_addr), on_disconnect(tcp_addr), on_peers_update(),
-        on_peer_discovered(peer_id, info), on_transfer_started(tid, filename, peer_name, direction),
-        on_transfer_progress(tid, fraction), on_transfer_complete(tid, success, message),
-        on_file_meta(meta, peer_name), schedule_gui(fn) — runs fn on the Tk thread.
-        """
+        """Wire GUI callback references (see each parameter's type hint above
+        for its signature); schedule_gui(fn) runs fn on the Tk thread."""
         self.on_system          = on_system
         self.on_message         = on_message
         self.on_connected       = on_connected
@@ -177,10 +167,8 @@ class ChatController:
         return self.node.broadcast_message(payload)
 
     def send_file(self, filepath: str, peer_id: str) -> tuple[bool, str]:
-        """Validate filepath, send FILE_META to peer_id, and wait for DOWNLOAD_REQUEST.
-
-        Returns (True, transfer_id) or (False, error_message).
-        """
+        """Validate filepath and send FILE_META; returns (True, transfer_id)
+        or (False, error_message)."""
         if self.transfer_manager is None:
             return False, "Node not started."
         return self.transfer_manager.send_file(filepath, peer_id)
@@ -270,14 +258,8 @@ class ChatController:
             self._tcp_to_peer[tcp_addr] = peer_id
 
     def _peer_id_to_tcp(self, peer_id: str) -> Optional[str]:
-        """Resolve peer_id to the active TCP session address.
-
-        Resolution order:
-        1. Explicit mapping registered at handshake time.
-        2. Search node.peers for an active session with the peer's IP
-           (bridges discovery listen-port vs OS-assigned ephemeral port).
-        3. Discovery tcp_address as last resort (initiator side only).
-        """
+        """Resolve peer_id to its active tcp_address: explicit mapping, then
+        an active session by IP, then discovery's stored address as fallback."""
         with self._map_lock:
             tcp = self._peer_to_tcp.get(peer_id)
         if tcp:
@@ -312,11 +294,7 @@ class ChatController:
         self._current_peer_id = peer_id
 
     def get_peer_id_for_tcp(self, tcp_addr: str) -> Optional[str]:
-        """Return the peer_id registered for tcp_addr, or None.
-
-        Public accessor so the GUI can resolve tcp_addr -> peer_id on
-        disconnect events without reaching into the internal mapping.
-        """
+        """Public accessor: resolve tcp_addr to its peer_id, or None."""
         with self._map_lock:
             return self._tcp_to_peer.get(tcp_addr)
 

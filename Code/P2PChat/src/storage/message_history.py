@@ -8,19 +8,9 @@ from storage.storage_manager import StorageManager
 
 
 class MessageHistory:
-    """Persistent per-peer message log.
-
-    Each peer gets its own JSON file under data/storage/chat_history/
-    named <peer_id>.json.  Records follow the HistoryRecord DTO::
-
-        {
-            "message_id": "...",
-            "peer_id":    "...",
-            "direction":  "sent" | "received",
-            "content":    "...",
-            "timestamp":  1234567890.0
-        }
-    """
+    """Persistent per-peer message log: one JSON file per peer_id under
+    data/storage/chat_history/, each record a HistoryRecord DTO
+    (message_id, peer_id, direction, content, timestamp)."""
 
     def __init__(self) -> None:
         """Initialise and ensure the history directory exists."""
@@ -49,11 +39,8 @@ class MessageHistory:
         StorageManager.save_json(file_path, records)
 
     def append_message(self, peer_id: str, record: dict[str, Any]) -> None:
-        """Append one record under the lock (read-modify-write, see __init__).
-
-        Reloads the whole file each call — O(n), fine at course-project
-        message volumes.
-        """
+        """Append one record under the lock; reloads the whole file each
+        call (O(n), fine at course-project volumes)."""
         with self._lock:
             history = self.load_history(peer_id)
             history.append(record)

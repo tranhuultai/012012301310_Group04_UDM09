@@ -1,4 +1,7 @@
 """P2PNode: TCP server, handshake, session management, and message routing."""
+# WHY changed: hardening pass — fixed a receive-thread crash (naive timestamp),
+# a blocked-peer file-transfer bypass, a discovery identity-spoofing gap, and
+# callbacks firing while discovery_lock was still held.
 
 import collections
 import datetime
@@ -12,7 +15,7 @@ from security.crypto import CryptoHandler
 from security.jwt_handler import JWTHandler
 from security.rsa_utils import RSAUtils
 from identity.identity_manager import IdentityManager
-from identity.identity_manager import generate_peer_id
+from identity.identity_manager import generate_peer_id, generate_fingerprint
 from message.protocol import PacketType, ProtocolHandler
 from network.discovery import DiscoveryService, PEER_TIMEOUT
 from trust.tofu_engine import TOFUEngine
@@ -22,20 +25,16 @@ logger = logging.getLogger(__name__)
 
 HANDSHAKE_TIMEOUT = 10   # seconds before a pending handshake is dropped
 
-# _RECV_TIMEOUT used to be 30s with no heartbeat, so a quiet-but-alive chat
-# (no traffic while reading/composing) would get silently killed. Now
-# _send_heartbeats pings every active session every _PING_INTERVAL seconds
-# regardless of chat activity, so this timeout only fires for a peer that
-# misses several pings in a row — i.e. actually dead, not just idle.
+# _send_heartbeats pings every _PING_INTERVAL secs so this only fires for
+# a genuinely dead peer, not one that's just quietly reading/composing.
 _RECV_TIMEOUT  = 45   # per-socket read timeout (catches stalled peers)
 _PING_INTERVAL = 15   # heartbeat period; comfortably under _RECV_TIMEOUT
 _AddressMap       = dict[int, str]  # id(socket) -> "IP:PORT"
 _SEEN_MSG_MAX     = 4096  # max message IDs in the deque (FIFO eviction)
 
-# Bounded retry for the initial TCP connect() only — a transient LAN hiccup
-# or a peer mid-restart looks identical to "not there" on a single attempt.
-# connect_to_peer() always runs off a background thread (see gui/app.py's
-# Connect handlers), so the sleep()s here never block the GUI.
+# Bounded retry for the initial connect() — a LAN hiccup or peer mid-restart
+# looks identical to "not there" on one attempt. Runs off a background
+# thread (gui/app.py), so the sleep()s here never block the GUI.
 _CONNECT_RETRIES          = 3   # total attempts, including the first
 _CONNECT_RETRY_BASE_DELAY = 1   # seconds; doubles each retry: 1s, 2s
 
@@ -52,29 +51,9 @@ _MAX_MESSAGE_AGE_SECONDS = 300  # 5 min — generous enough to tolerate clock sk
 
 
 class P2PNode:
-    """TCP peer node: accepts/initiates connections, manages sessions, routes messages.
-
-    Keying convention
-    -----------------
-    * peers / peer_sessions: keyed by "IP:PORT" (the actual TCP address).
-    * discovered_peers: keyed by peer_id (SHA-256 of public key).
-    * A tcp_address field in each discovery entry bridges the two key spaces.
-      It is updated to the **live** (possibly ephemeral) address the moment a
-      session becomes active, so downstream lookups always match.
-
-    Session dict schema (created by _register_peer, extended by handshake handlers)
-    -----------------
-    {
-        "state":        "pending" | "active",
-        "peer_id":      str | None,       # set during handshake
-        "public_key":   str | None,       # remote PEM public key
-        "session_key":  bytes | None,     # raw Fernet key bytes
-        "crypto":       CryptoHandler | None,
-        "username":     str | None,
-        "listen_port":  int | None,
-        "is_initiator": bool,
-    }
-    """
+    """TCP peer node: accepts/initiates connections, manages sessions, routes
+    messages. peers/peer_sessions are keyed by "IP:PORT"; discovered_peers by
+    peer_id (SHA-256 of public key) — tcp_address bridges the two."""
 
     def __init__(
         self,
@@ -86,10 +65,8 @@ class P2PNode:
         on_connected=None,
         on_peer_discovered=None,
     ) -> None:
-        """Construct the node (does not bind or start threads yet). Callback signatures:
-        on_message(peer_id, sender, payload), on_disconnect(tcp_addr),
-        on_connected(peer_id, tcp_addr), on_peer_discovered(peer_id, info).
-        """
+        """Construct the node (does not bind or start threads yet); see each
+        callback parameter's name for its argument signature."""
         self.host     = host
         self.port     = port
         self.username = username
@@ -219,14 +196,9 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def _dial_with_retry(self, host: str, port: int) -> socket.socket | None:
-        """Attempt TCP connect() to host:port up to _CONNECT_RETRIES times
-        with exponential backoff; return the connected socket or None.
-
-        Split out of connect_to_peer() so that method's own branch/return
-        count doesn't grow with the retry loop (pylint too-many-branches /
-        too-many-return-statements) — this loop is also independently
-        testable in isolation from the registration/handshake steps.
-        """
+        """Connect to host:port with exponential backoff, up to _CONNECT_RETRIES
+        times; return the socket or None. Split out to keep connect_to_peer()'s
+        branch count down and make retry logic independently testable."""
         tcp_addr = f"{host}:{port}"
         sock: socket.socket | None = None
         last_exc: OSError | None = None
@@ -263,12 +235,9 @@ class P2PNode:
                 logger.debug("[NODE] Already connected to %s", tcp_addr)
                 return False
 
-        # Dedup 2: active session with the same peer_id, regardless of port.
-        # We look up the peer_id from discovery first (by listen-port address),
-        # then scan ALL sessions for that peer_id directly.  This catches the case
-        # where the remote peer already connected TO US with an ephemeral port —
-        # discovered_peers["tcp_address"] would still hold the listen port, so
-        # a simple tcp_address == tcp_addr comparison would miss the existing session.
+        # Dedup 2: same peer_id already active on a different (e.g.
+        # ephemeral, if they connected to us) port — a plain tcp_addr
+        # comparison would miss it, so resolve peer_id and scan by that.
         target_pid: str | None = None
         with self.discovery_lock:
             for pid, info in self.discovered_peers.items():
@@ -330,14 +299,9 @@ class P2PNode:
             )
             data = self.protocol_handler.serialize(packet)
 
-            # Enforce the same ceiling the *receiver* applies in
-            # protocol.py's receive_packet(). Without this check sendall()
-            # below succeeds locally — TCP itself has no size opinion —
-            # while the remote side silently discards the oversized packet
-            # on arrival, so the sender believed the message went through
-            # when it never did. Returning False here lets the caller
-            # (controllers/controller.py -> gui/app.py) surface a real error
-            # instead of a false "sent" state.
+            # Mirror the receiver's own ceiling (protocol.py's
+            # receive_packet) — sendall() would otherwise "succeed" locally
+            # while the receiver silently drops the oversized packet.
             if len(data) > MAX_PACKET_SIZE:
                 logger.warning(
                     "[NODE] Message too large to send (%d bytes > %d limit) to %s",
@@ -365,14 +329,8 @@ class P2PNode:
         return sent, failed
 
     def _send_heartbeats(self) -> None:
-        """Ping every active session every _PING_INTERVAL seconds.
-
-        Keeps data flowing on otherwise-idle connections so the receive
-        loop's _RECV_TIMEOUT (see its comment) never mistakes a quiet-but-
-        alive peer for a dead one. No reply is expected or needed — the
-        receiving side's own next receive_packet() call gets a fresh
-        _RECV_TIMEOUT window simply by having received *anything*.
-        """
+        """Ping every active session every _PING_INTERVAL seconds, so
+        _RECV_TIMEOUT never mistakes a quiet-but-alive peer for a dead one."""
         while self.is_running:
             time.sleep(_PING_INTERVAL)
             with self.peers_lock:
@@ -419,10 +377,8 @@ class P2PNode:
             return dict(self.discovered_peers)
 
     def get_active_session_for_ip(self, ip: str) -> str | None:
-        """Find an active session's "IP:port" key for ip (any port).
-
-        Bridges discovery's listen-port to the OS-assigned ephemeral port.
-        """
+        """Find an active session's "IP:port" key for ip (any port) — bridges
+        discovery's listen-port to the OS-assigned ephemeral port."""
         with self.peers_lock:
             for tcp_addr, sess in self.peer_sessions.items():
                 if tcp_addr.startswith(f"{ip}:") and sess.get("state") == "active":
@@ -559,11 +515,8 @@ class P2PNode:
         if tcp_addr is None:
             return
 
-        # "version" is a required field (see message/protocol.py's
-        # _HANDSHAKE_REQUIRED) but its *value* was never compared against
-        # anything — two builds with diverging packet formats could still
-        # "handshake" successfully. Reject a mismatch instead of assuming
-        # compatibility; both sides currently send config.PROTOCOL_VERSION.
+        # "version" was required but never actually compared — two diverged
+        # builds could still "handshake" successfully.
         incoming_version = packet.get("version")
         if incoming_version != PROTOCOL_VERSION:
             logger.warning(
@@ -676,11 +629,9 @@ class P2PNode:
                 return
             peer_id = session.get("peer_id", "")
 
-            # Guard against duplicate active sessions for the same peer_id.
-            # This can happen when both sides press Connect at the same time:
-            # both handshakes complete and both try to become "active".
-            # We only *identify* the older session here — see below for why
-            # closing it happens after this lock is released.
+            # Both sides pressing Connect at once can leave two active
+            # sessions for one peer_id — identify the older one here, close
+            # it below (after releasing this lock).
             if peer_id:
                 for addr, existing_sess in list(self.peer_sessions.items()):
                     if (addr != tcp_addr
@@ -692,19 +643,8 @@ class P2PNode:
             session["crypto"] = crypto
             session["state"]  = "active"
 
-        # Close the older session synchronously, on this same thread, right
-        # after releasing peers_lock — NOT inside the "with" block above.
-        # _remove_peer() re-acquires peers_lock itself (RLock, so nesting
-        # would technically be legal), but every other lock use in this file
-        # is non-nested (peers_lock and discovery_lock are never held at the
-        # same time — verified across the whole module), and this keeps that
-        # invariant intact rather than introducing the first exception.
-        # A window where both sessions briefly read as "active" still exists
-        # between this line and _remove_peer() completing, but it's now
-        # bounded by a single synchronous call on this thread instead of by
-        # OS thread-scheduling latency for a freshly spawned "cleanup"
-        # thread — the old approach could leave both sessions active for
-        # however long the scheduler took to run that thread.
+        # Closed after releasing peers_lock (not inside the "with" above) to
+        # keep every lock in this file non-nested.
         if old_sock is not None:
             logger.info(
                 "[NODE] Duplicate session for %s — closing older %s",
@@ -718,14 +658,9 @@ class P2PNode:
         self._fire_callback(self.on_connected, peer_id, tcp_addr)
 
     def _check_rate_limit(self, tcp_addr: str) -> bool:
-        """Return False once tcp_addr exceeds _MSG_RATE_LIMIT_MAX messages
-        within the trailing _MSG_RATE_LIMIT_WINDOW seconds.
-
-        Sliding window via a per-peer deque of send timestamps — old entries
-        age out on their own, so there's no separate cleanup pass needed
-        while the peer stays connected (the deque itself is dropped in
-        _remove_peer when the peer disconnects).
-        """
+        """Return False once tcp_addr exceeds _MSG_RATE_LIMIT_MAX messages in
+        the trailing _MSG_RATE_LIMIT_WINDOW (sliding window via a per-peer
+        deque of timestamps; dropped entirely in _remove_peer)."""
         now = time.time()
         with self._msg_rate_lock:
             timestamps = self._msg_timestamps.setdefault(tcp_addr, collections.deque())
@@ -737,24 +672,19 @@ class P2PNode:
             return True
 
     def _is_message_stale(self, packet: dict) -> bool:
-        """Return True if packet's timestamp is missing/malformed or older
-        than _MAX_MESSAGE_AGE_SECONDS.
-
-        Split out of _handle_message() for the same reason as
-        _check_rate_limit: keeps that method's own branch/return count from
-        growing with each new guard clause. A malformed timestamp is
-        treated as stale (rejected) rather than accepted — validate_packet()
-        already guarantees "timestamp" is present and a string, so a value
-        that still fails to parse indicates a packet that doesn't actually
-        match this protocol's format.
-        """
+        """True if packet's timestamp is missing/malformed or older than
+        _MAX_MESSAGE_AGE_SECONDS (malformed counts as stale, not accepted)."""
         message_id = packet.get("message_id", "")[:8]
         try:
             msg_time = datetime.datetime.fromisoformat(packet["timestamp"])
+            # A timezone-less string parses fine here but raises TypeError
+            # when subtracted from aware "now" below — treat it as malformed.
+            if msg_time.tzinfo is None:
+                raise ValueError("timestamp has no timezone offset")
+            age = (datetime.datetime.now(datetime.timezone.utc) - msg_time).total_seconds()
         except (ValueError, TypeError):
             logger.warning("[NODE] Malformed timestamp — dropping message %s", message_id)
             return True
-        age = (datetime.datetime.now(datetime.timezone.utc) - msg_time).total_seconds()
         if age > _MAX_MESSAGE_AGE_SECONDS:
             logger.debug("[NODE] Stale message dropped (age=%.0fs): %s", age, message_id)
             return True
@@ -831,6 +761,14 @@ class P2PNode:
     # Discovery                                                            #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _discovered_identity_is_spoofed(peer_id: str, fingerprint, pub_key: str) -> bool:
+        """True unless peer_id/fingerprint are actually SHA-256(pub_key) — the
+        JWT alone only proves who signed it, not that these claimed values
+        belong to that key, letting a sender impersonate someone else's peer_id."""
+        return (peer_id != generate_peer_id(pub_key)
+                or fingerprint != generate_fingerprint(pub_key))
+
     def _handle_discovered_peer(self, packet: dict, address: tuple[str, int]) -> None:
         """Called by DiscoveryService for every valid discovery/response packet."""
         peer_ip = address[0]
@@ -857,6 +795,13 @@ class P2PNode:
         if not peer_id:
             return
 
+        if self._discovered_identity_is_spoofed(peer_id, packet.get("fingerprint"), pub_key):
+            logger.warning(
+                "[DISCOVERY] peer_id/fingerprint do not match public_key from %s — dropping",
+                peer_ip,
+            )
+            return
+
         peer_port = packet.get("port")
         if peer_port is None:
             return
@@ -864,6 +809,11 @@ class P2PNode:
         tcp_address = f"{peer_ip}:{peer_port}"
         trust_state = self.tofu.verify_peer(peer_id, packet.get("fingerprint", ""))
         now         = time.time()
+
+        # Snapshot for the callback, fired after discovery_lock releases below
+        # — holding a lock across a synchronous callback risks deadlock.
+        notify_info: dict | None = None
+        is_new = False
 
         with self.discovery_lock:
             existing = self.discovered_peers.get(peer_id)
@@ -886,34 +836,40 @@ class P2PNode:
                     existing["tcp_address"] = tcp_address
                 existing["status"] = "online"
                 if changed:
-                    self._fire_callback(self.on_peer_discovered, peer_id, dict(existing))
-                return
+                    notify_info = dict(existing)
+            else:
+                info = {
+                    "username":    packet.get("username", "Unknown"),
+                    "ip":          peer_ip,
+                    "port":        peer_port,
+                    "tcp_address": tcp_address,
+                    "status":      "online",
+                    "connected":   False,
+                    "peer_id":     peer_id,
+                    "last_seen":   now,
+                    "fingerprint": packet.get("fingerprint"),
+                    "trust_state": trust_state,
+                }
+                self.discovered_peers[peer_id] = info
+                notify_info = dict(info)
+                is_new = True
 
-            info = {
-                "username":    packet.get("username", "Unknown"),
-                "ip":          peer_ip,
-                "port":        peer_port,
-                "tcp_address": tcp_address,
-                "status":      "online",
-                "connected":   False,
-                "peer_id":     peer_id,
-                "last_seen":   now,
-                "fingerprint": packet.get("fingerprint"),
-                "trust_state": trust_state,
-            }
-            self.discovered_peers[peer_id] = info
+        if is_new and notify_info is not None:
+            if peer_id == self.identity_manager.get_peer_id():
+                logger.warning("[DISCOVERY] Peer %s has same identity — "
+                               "two instances sharing identity.json?", peer_id[:12])
+            logger.info("[DISCOVERY] New peer: %s (%s)", peer_id[:12], notify_info["username"])
 
-        if peer_id == self.identity_manager.get_peer_id():
-            logger.warning("[DISCOVERY] Peer %s has same identity — "
-                           "two instances sharing identity.json?", peer_id[:12])
-
-        logger.info("[DISCOVERY] New peer: %s (%s)", peer_id[:12], info["username"])
-        self._fire_callback(self.on_peer_discovered, peer_id, dict(info))
+        if notify_info is not None:
+            self._fire_callback(self.on_peer_discovered, peer_id, notify_info)
 
     def _cleanup_expired_peers(self) -> None:
         """Mark peers offline when they stop broadcasting (runs every 5 s)."""
         while self.is_running:
             now = time.time()
+            # Collect, then fire callbacks after releasing the lock — same
+            # reasoning as _handle_discovered_peer above.
+            to_notify: list[tuple[str, dict]] = []
             with self.discovery_lock:
                 for peer_id, peer in list(self.discovered_peers.items()):
                     if (peer["status"] == "online"
@@ -921,7 +877,9 @@ class P2PNode:
                         # Transition fires once — no repeated callbacks.
                         peer["status"]    = "offline"
                         peer["connected"] = False
-                        self._fire_callback(self.on_peer_discovered, peer_id, dict(peer))
+                        to_notify.append((peer_id, dict(peer)))
+            for peer_id, info in to_notify:
+                self._fire_callback(self.on_peer_discovered, peer_id, info)
             time.sleep(5)
 
     def _sync_discovery_on_connect(self, peer_id: str, tcp_addr: str) -> None:
@@ -1138,11 +1096,8 @@ class P2PNode:
 
     def _handle_file_packet(self, packet: dict,
                              peer_socket: socket.socket) -> None:
-        """Route an inbound file-transfer packet to TransferManager.
-
-        Passes the session's crypto along so TransferManager can decrypt
-        FILE_CHUNK payloads without reaching into node internals.
-        """
+        """Route an inbound file-transfer packet to TransferManager, passing
+        the session's crypto so it can decrypt FILE_CHUNK payloads."""
         if self.on_file_packet is None:
             return
         tcp_addr = self._get_tcp_addr(peer_socket)
@@ -1150,6 +1105,14 @@ class P2PNode:
             sess       = self.peer_sessions.get(tcp_addr) if tcp_addr else None
             crypto     = sess.get("crypto")    if sess else None
             sender_pid = sess.get("peer_id", "") if sess else ""
+
+        # Mirrors the same check in _handle_message: a chunk already in the
+        # OS receive buffer when a peer gets blocked could otherwise still
+        # reach TransferManager and get written to disk.
+        if sender_pid and self.tofu.is_blocked(sender_pid):
+            logger.debug("[NODE] File packet dropped — %s is BLOCKED", sender_pid[:12])
+            return
+
         self._fire_callback(self.on_file_packet, packet, crypto, sender_pid)
 
     def send_raw_packet(self, packet: dict, tcp_addr: str) -> bool:

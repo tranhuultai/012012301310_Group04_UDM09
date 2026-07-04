@@ -2,8 +2,13 @@
 # pylint: disable=missing-module-docstring
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
+# WHY changed: added regression tests for node.py's naive-timestamp crash,
+# blocked-peer file-packet bypass, discovery spoofing, and lock-held-during-
+# callback fixes.
 
 import datetime
+import threading
+import time
 from typing import cast
 import socket
 
@@ -16,6 +21,9 @@ from network.node import (
 )
 from message.protocol import PacketType
 from security.rsa_utils import RSAUtils
+from security.jwt_handler import JWTHandler
+from identity.identity_manager import generate_peer_id, generate_fingerprint
+from trust.trust_state import TrustState
 from config import MAX_PACKET_SIZE, PROTOCOL_VERSION
 
 
@@ -117,8 +125,7 @@ def test_message_stale_when_timestamp_malformed():
 
 
 # --------------------------------------------------------------------- #
-# FLAW #1 — oversized outgoing message rejected instead of silently     #
-# accepted-then-dropped by the receiver                                 #
+# FLAW #1 — oversized outgoing message rejected, not silently dropped   #
 # --------------------------------------------------------------------- #
 
 def test_send_message_rejects_oversized_payload():
@@ -198,8 +205,7 @@ def test_handshake_accepts_matching_version():
 
 
 # --------------------------------------------------------------------- #
-# FLAW #3 — duplicate active session for the same peer_id is closed     #
-# synchronously instead of handed off to a detached cleanup thread      #
+# FLAW #3 — duplicate peer_id session closed synchronously, not detached #
 # --------------------------------------------------------------------- #
 
 def test_duplicate_session_closed_before_handler_returns():
@@ -232,3 +238,169 @@ def test_duplicate_session_closed_before_handler_returns():
     assert "1.1.1.1:5000" not in node.peer_sessions
     assert cast(FakeSocket, old_sock).closed is True
     assert node.peer_sessions["2.2.2.2:5000"]["state"] == "active"
+
+
+# --------------------------------------------------------------------- #
+# FLAW — _is_message_stale must not crash on an offset-less timestamp   #
+# --------------------------------------------------------------------- #
+
+def test_message_stale_when_timestamp_has_no_timezone():
+    node = create_node()
+    # Valid ISO 8601 but no UTC offset — used to raise an uncaught TypeError
+    # (naive vs aware datetime), killing the receive thread.
+    packet = {"message_id": "abc123", "timestamp": "2026-01-01T00:00:00"}
+
+    assert node._is_message_stale(packet) is True
+
+
+# --------------------------------------------------------------------- #
+# FLAW — blocked peers must not reach TransferManager either            #
+# --------------------------------------------------------------------- #
+
+def test_handle_file_packet_dropped_for_blocked_peer():
+    node = create_node()
+    sock = cast(socket.socket, FakeSocket())
+    received: list[dict] = []
+    node.on_file_packet = lambda packet, crypto, sender_pid: received.append(packet)
+
+    node._register_peer("1.2.3.4:5000", sock, True)
+    node.peer_sessions["1.2.3.4:5000"]["peer_id"] = "peerX"
+    node.tofu.store.add_peer("peerX", "aa:bb", TrustState.BLOCKED)
+
+    node._handle_file_packet({"type": PacketType.FILE_META}, sock)
+
+    assert not received
+
+
+def test_handle_file_packet_delivered_for_normal_peer():
+    node = create_node()
+    sock = cast(socket.socket, FakeSocket())
+    received: list[dict] = []
+    node.on_file_packet = lambda packet, crypto, sender_pid: received.append(packet)
+
+    node._register_peer("1.2.3.4:5000", sock, True)
+    node.peer_sessions["1.2.3.4:5000"]["peer_id"] = "peerY"
+
+    node._handle_file_packet({"type": PacketType.FILE_META}, sock)
+
+    assert len(received) == 1
+
+
+# --------------------------------------------------------------------- #
+# FLAW — discovery must reject peer_id/fingerprint spoofing a public_key #
+# --------------------------------------------------------------------- #
+
+def _discovery_packet(priv_pem: str, pub_pem: str, peer_id: str, fingerprint: str) -> dict:
+    token = JWTHandler.create_identity_token(
+        peer_id=peer_id, username="Peer", fingerprint=fingerprint,
+        private_key_pem=priv_pem,
+    )
+    return {
+        "type":           "discovery",
+        "instance_id":    "other-instance",
+        "peer_id":        peer_id,
+        "username":       "Peer",
+        "fingerprint":    fingerprint,
+        "public_key":     pub_pem,
+        "identity_token": token,
+        "port":           6000,
+        "status":         "online",
+    }
+
+
+def test_discovered_peer_rejected_when_identity_spoofed():
+    node = create_node()
+    attacker_priv, attacker_pub = RSAUtils.generate_key_pair()
+    attacker_priv_pem = RSAUtils.serialize_private_key(attacker_priv)
+    attacker_pub_pem  = RSAUtils.serialize_public_key(attacker_pub)
+
+    victim_peer_id     = "victim-peer-id"
+    victim_fingerprint = "VI:CT:IM"
+
+    # The JWT is validly signed (by the attacker's own key), and its claims
+    # agree with the packet's own fields — but neither actually derives from
+    # attacker_pub_pem, which is the whole point of the attack.
+    packet = _discovery_packet(
+        attacker_priv_pem, attacker_pub_pem, victim_peer_id, victim_fingerprint)
+
+    node._handle_discovered_peer(packet, ("9.9.9.9", 6000))
+
+    assert victim_peer_id not in node.discovered_peers
+
+
+def test_discovered_peer_accepted_when_consistent():
+    node = create_node()
+    priv, pub = RSAUtils.generate_key_pair()
+    priv_pem = RSAUtils.serialize_private_key(priv)
+    pub_pem  = RSAUtils.serialize_public_key(pub)
+    real_peer_id     = generate_peer_id(pub_pem)
+    real_fingerprint = generate_fingerprint(pub_pem)
+
+    packet = _discovery_packet(priv_pem, pub_pem, real_peer_id, real_fingerprint)
+
+    node._handle_discovered_peer(packet, ("9.9.9.9", 6000))
+
+    assert real_peer_id in node.discovered_peers
+
+
+# FLAW — on_peer_discovered must fire after discovery_lock is released.
+# RLock re-acquire can't detect this (reentrant), so these tests check
+# RLock()._is_owned() instead: True only while still inside the `with`.
+
+def test_new_peer_callback_fires_after_lock_released():
+    node = create_node()
+    lock_held: list[bool] = []
+    node.on_peer_discovered = lambda peer_id, info: lock_held.append(
+        node.discovery_lock._is_owned())  # pylint: disable=protected-access
+
+    priv, pub = RSAUtils.generate_key_pair()
+    priv_pem, pub_pem = RSAUtils.serialize_private_key(priv), RSAUtils.serialize_public_key(pub)
+    peer_id, fingerprint = generate_peer_id(pub_pem), generate_fingerprint(pub_pem)
+    packet = _discovery_packet(priv_pem, pub_pem, peer_id, fingerprint)
+
+    node._handle_discovered_peer(packet, ("9.9.9.9", 6000))
+
+    assert lock_held == [False]
+
+
+def test_changed_peer_callback_fires_after_lock_released():
+    node = create_node()
+    priv, pub = RSAUtils.generate_key_pair()
+    priv_pem, pub_pem = RSAUtils.serialize_private_key(priv), RSAUtils.serialize_public_key(pub)
+    peer_id, fingerprint = generate_peer_id(pub_pem), generate_fingerprint(pub_pem)
+
+    # First contact — registers the peer, doesn't yet exercise the
+    # "existing entry changed" branch this test targets.
+    node._handle_discovered_peer(
+        _discovery_packet(priv_pem, pub_pem, peer_id, fingerprint), ("9.9.9.9", 6000))
+
+    lock_held: list[bool] = []
+    node.on_peer_discovered = lambda pid, info: lock_held.append(
+        node.discovery_lock._is_owned())  # pylint: disable=protected-access
+
+    # Same peer, different username — trips the dirty-check so `changed`
+    # is True and the callback actually fires this time.
+    packet2 = _discovery_packet(priv_pem, pub_pem, peer_id, fingerprint)
+    packet2["username"] = "RenamedPeer"
+    node._handle_discovered_peer(packet2, ("9.9.9.9", 6000))
+
+    assert lock_held == [False]
+
+
+def test_cleanup_expired_peers_callback_fires_after_lock_released():
+    node = create_node()
+    lock_held: list[bool] = []
+    node.on_peer_discovered = lambda peer_id, info: lock_held.append(
+        node.discovery_lock._is_owned())  # pylint: disable=protected-access
+
+    node.discovered_peers["stale-peer"] = {
+        "status": "online", "connected": True,
+        "last_seen": time.time() - 9999, "username": "Ghost",
+    }
+    node.is_running = True
+    t = threading.Thread(target=node._cleanup_expired_peers, daemon=True)
+    t.start()
+    t.join(timeout=2)
+    node.is_running = False
+
+    assert lock_held == [False]

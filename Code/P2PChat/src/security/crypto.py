@@ -17,12 +17,9 @@ class CryptoHandler:
         return self.fernet.encrypt(data.encode("utf-8")).decode("utf-8")
 
     def decrypt(self, encrypted_data: str, ttl: int | None = None) -> str:
-        """Decrypt base64 ciphertext back to the original string.
-
-        No TTL by default — replay protection already happens at the node
-        level (seen-message dedup), and a Fernet TTL would false-reject on
-        clock skew between peers.
-        """
+        """Decrypt base64 ciphertext back to the original string. No TTL by
+        default — node-level dedup handles replay; TTL would false-reject
+        on clock skew."""
         if not isinstance(encrypted_data, str):
             raise ValueError("Data to decrypt must be a string.")
         return self.fernet.decrypt(encrypted_data.encode("utf-8"), ttl=ttl).decode("utf-8")

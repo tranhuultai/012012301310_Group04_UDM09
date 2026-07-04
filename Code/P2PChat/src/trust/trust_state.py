@@ -2,15 +2,9 @@
 
 
 class TrustState:
-    """Enumeration of peer trust states.
-
-    State machine:
-        NEW       — first discovery, not yet in store
-        TRUSTED   — manually trusted by the user
-        VERIFIED  — fingerprint confirmed on repeated contact
-        MISMATCH  — fingerprint changed since last contact (possible MITM)
-        BLOCKED   — explicitly blocked; all traffic rejected
-    """
+    """Peer trust states: NEW (first discovery), TRUSTED (user-trusted),
+    VERIFIED (fingerprint confirmed), MISMATCH (fingerprint changed,
+    possible MITM), BLOCKED (all traffic rejected)."""
 
     NEW      = "NEW"
     TRUSTED  = "TRUSTED"

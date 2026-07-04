@@ -1,18 +1,7 @@
-"""Unit tests for network/transfer_manager.py.
-
-Strategy: test every pure function and the TransferMeta DTO directly
-without requiring a real network node, TCP sockets, or GUI.
-
-Functions under test:
-    _sha256_file          — file hashing
-    _mime_for_ext         — MIME type lookup
-    TransferMeta          — DTO serialisation / deserialisation
-    TransferManager._total_chunks   — chunk-count arithmetic
-    TransferManager._safe_save_path — collision-safe path generation
-
-The send_file validation logic is tested by creating real temporary files
-and verifying the (False, error_message) return values.
-"""
+"""Unit tests for network/transfer_manager.py — pure functions and the
+TransferMeta DTO, no real network node/sockets/GUI required."""
+# WHY changed: added regression tests for transfer_manager.py's _transfers
+# eviction fix (finish/cancel/cleanup_peer all used to leak entries forever).
 from __future__ import annotations
 
 import hashlib
@@ -27,6 +16,10 @@ from network.transfer_manager import (
     TransferManager,
     _sha256_file,
     _mime_for_ext,
+    _ST_PENDING,
+    _ST_SENDING,
+    _ST_RECEIVING,
+    _ST_DONE,
 )
 from config import FILE_CHUNK_SIZE, FILE_MAX_SIZE, FILE_ALLOWED_EXT  # noqa
 
@@ -332,3 +325,63 @@ class TestSendFileValidation:
         _, msg = mgr.send_file(str(f), "peer_id")
         # Should fail on "Peer not connected", not "Unsupported file type"
         assert "Unsupported" not in msg
+
+
+# ── _transfers bookkeeping cleanup (leak fix) ─────────────────────────────
+
+class TestTransferEviction:
+    """A transfer's self._transfers entry must not outlive its terminal state
+    (previously nothing ever removed one — every transfer leaked forever)."""
+
+    def _make_manager(self) -> TransferManager:
+        mgr = object.__new__(TransferManager)
+        mgr._node         = MagicMock()
+        mgr._ctrl         = MagicMock()
+        mgr._schedule_gui = lambda fn: fn()   # run inline so callbacks are observable
+        mgr._transfers    = {}
+        mgr._lock         = __import__("threading").Lock()
+        for attr in ("on_transfer_started", "on_transfer_progress",
+                     "on_transfer_complete", "on_transfer_error",
+                     "on_file_meta"):
+            setattr(mgr, attr, None)
+        return mgr
+
+    def test_finish_evicts_entry_on_success(self) -> None:
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_SENDING, "tcp_addr": "1.2.3.4:5000"}
+        mgr._finish("tid-1", True, "done")
+        assert "tid-1" not in mgr._transfers
+
+    def test_finish_evicts_entry_on_failure(self) -> None:
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_RECEIVING, "tcp_addr": "1.2.3.4:5000"}
+        mgr._finish("tid-1", False, "failed")
+        assert "tid-1" not in mgr._transfers
+
+    def test_cancel_transfer_evicts_entry(self) -> None:
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_PENDING, "tcp_addr": "1.2.3.4:5000"}
+        mgr.cancel_transfer("tid-1")
+        assert "tid-1" not in mgr._transfers
+
+    def test_cleanup_peer_evicts_pending_transfer(self) -> None:
+        """A _ST_PENDING transfer must be cleaned up too when its peer
+        disconnects (cleanup_peer previously only checked _ST_RECEIVING)."""
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_PENDING, "tcp_addr": "1.2.3.4:5000"}
+        mgr.cleanup_peer("1.2.3.4:5000")
+        assert "tid-1" not in mgr._transfers
+
+    def test_cleanup_peer_ignores_other_peers(self) -> None:
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_PENDING, "tcp_addr": "9.9.9.9:6000"}
+        mgr.cleanup_peer("1.2.3.4:5000")
+        assert "tid-1" in mgr._transfers
+
+    def test_cleanup_peer_ignores_already_finished_transfer(self) -> None:
+        """A DONE/ERROR/CANCELLED transfer for the same peer must be left
+        alone — cleanup_peer only targets transfers still in progress."""
+        mgr = self._make_manager()
+        mgr._transfers["tid-1"] = {"state": _ST_DONE, "tcp_addr": "1.2.3.4:5000"}
+        mgr.cleanup_peer("1.2.3.4:5000")
+        assert "tid-1" in mgr._transfers

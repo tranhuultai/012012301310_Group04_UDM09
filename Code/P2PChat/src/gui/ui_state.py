@@ -7,13 +7,10 @@ from typing import Any
 
 @dataclass
 class UIState:
-    """Transient GUI state, updated from network callbacks via after(0, ...)
-    and read back when rebuilding the sidebar or chat header. One place to
-    read from instead of passing raw dicts through every callback hop.
-    """
+    """Transient GUI state updated from network callbacks, read back when
+    rebuilding the sidebar/chat header."""
 
-    # Registry of all peers seen via UDP discovery or TCP handshake.
-    # Keys: peer_id (SHA-256 hex).  Values: plain peer info dicts.
+    # Peers seen via discovery/handshake, keyed by peer_id (SHA-256 hex).
     discovered_peers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # The peer_id the user has selected in the sidebar.

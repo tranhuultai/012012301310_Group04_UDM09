@@ -1,4 +1,6 @@
 """Persistent trust store: maps peer_id → {fingerprint, trust_state}."""
+# WHY changed: concurrent background saves had no ordering guarantee, so an
+# older snapshot's write could land after (and silently overwrite) a newer one.
 
 import json
 import logging
@@ -11,36 +13,24 @@ logger = logging.getLogger(__name__)
 
 
 class TrustStore:
-    """Thread-safe JSON-backed store for peer trust records.
-
-    File layout (data/trust/known_peers.json)::
-
-        {
-            "<peer_id>": {
-                "fingerprint": "<hex>",
-                "trust_state": "VERIFIED"
-            }
-        }
-    """
+    """Thread-safe JSON-backed store for peer trust records, in
+    data/trust/<profile>.json as {peer_id: {fingerprint, trust_state}}."""
 
     def __init__(self, profile: str = "known_peers") -> None:
-        """Load the trust store from data/trust/<profile>.json.
-
-        Pass a per-port profile when running multiple local instances —
-        otherwise their writes race on the same file (Windows rejects the
-        .tmp-file rename with "Access is denied", corrupting the store).
-        """
+        """Load the trust store; pass a per-port profile for multiple local
+        instances, or their writes race on the same file."""
         self._data_dir   = Path("data/trust")
         self._store_file = self._data_dir / f"{profile}.json"
         self._lock       = threading.RLock()
-        # Serializes the actual disk write across the background threads
-        # _save() spawns. Without this, two saves fired close together (e.g.
-        # discovering/connecting 2+ peers within milliseconds of each other)
-        # race on the same .tmp file — one thread's rename can hit the other
-        # thread's still-open file handle, which Windows rejects with
-        # "Access is denied" / "used by another process", silently dropping
-        # that trust-state update.
+        # Serializes disk writes across the background threads _save() spawns
+        # — without it, two saves fired close together race on the same .tmp
+        # file, which Windows rejects with "Access is denied".
         self._write_lock = threading.Lock()
+        # Monotonic counter so a slow write for an older snapshot can't land
+        # after (and silently regress) a newer one — each _save() spawns its
+        # own thread, and scheduling, not call order, decides which writes first.
+        self._save_seq         = 0
+        self._last_written_seq = 0
         self._peers: dict[str, dict] = {}
         self._load()
 
@@ -72,29 +62,33 @@ class TrustStore:
             self._peers = {}
 
     def _save(self) -> None:
-        """Schedule an asynchronous atomic write of the trust store.
-
-        Taking a snapshot of the current data and writing in a background
-        thread prevents the discovery or receive threads from stalling on
-        slow storage while trust records are updated.
-        """
+        """Schedule an async atomic write, so slow storage can't stall the
+        discovery/receive threads calling this."""
         # Snapshot under the existing lock (caller holds it).
         snapshot = dict(self._peers)
+        self._save_seq += 1
+        seq = self._save_seq
         threading.Thread(
             target=self._write_snapshot,
-            args=(snapshot,),
+            args=(snapshot, seq),
             daemon=True,
             name="TrustStoreSave",
         ).start()
 
-    def _write_snapshot(self, snapshot: dict) -> None:
-        """Atomically write snapshot to disk (runs in a background thread)."""
+    def _write_snapshot(self, snapshot: dict, seq: int) -> None:
+        """Atomically write snapshot to disk; skipped if a higher seq
+        already landed first (see _save_seq)."""
         tmp = self._store_file.with_suffix(".tmp")
         with self._write_lock:
+            if seq < self._last_written_seq:
+                logger.debug("[TRUST] Skipping stale write (seq=%d < %d)",
+                             seq, self._last_written_seq)
+                return
             try:
                 with open(tmp, "w", encoding="utf-8") as fh:
                     json.dump(snapshot, fh, indent=4)
                 tmp.replace(self._store_file)
+                self._last_written_seq = seq
             except OSError as exc:
                 logger.error("[TRUST] Failed to save trust store: %s", exc)
                 try:

@@ -1,24 +1,6 @@
-"""ChatBox: scrollable message area — canvas-rendered bubbles.
-
-Rendering approach:
-    Messages are drawn directly onto a tkinter.Canvas (rounded-rect + text
-    items, see gui/chat_bubble.py) instead of being built as CTkFrame/
-    CTkLabel widget trees. Every CTk widget independently redraws itself on
-    <Configure> (confirmed by reading customtkinter's own installed source)
-    — with one CTkFrame subtree per chat message, a resize drag or message
-    flood triggered a redraw cascade across hundreds of live widgets,
-    causing black flicker/tearing on Windows (Tk has no whole-window
-    double buffer). Canvas items have no window handle and no <Configure>
-    binding of their own, so that cascade cannot occur.
-
-    File-transfer cards stay as CTkFrame/CTkButton, embedded into the same
-    canvas via canvas.create_window() so everything still shares one
-    scrollable area. They aren't converted to raw canvas drawing because
-    they're rare (one per file transfer, not one per chat message) and
-    aren't the high-volume case that caused the flicker — converting them
-    too would mean reimplementing button click/hover as manual canvas tag
-    bindings for no real benefit here.
-"""
+"""ChatBox: scrollable message area, drawn as raw Canvas items (see
+gui/chat_bubble.py) rather than a CTkFrame per message, which caused a
+flicker cascade. File-transfer cards stay as embedded CTkFrame/CTkButton."""
 from __future__ import annotations
 
 import tkinter as tk
@@ -31,20 +13,14 @@ import customtkinter as ctk
 from gui import theme as T
 from gui.chat_bubble import draw_bubble, draw_divider, draw_system
 
-# Bubbles wrap at ~65% of the chat column's width — the proportion, not a
-# fixed margin, is what makes them scale naturally with the window instead
-# of always leaving/eating the same number of pixels (how Telegram/Discord
-# size their message column). Still bounded on both ends: a floor so a
-# narrow window doesn't crush bubbles unreadably thin, and a ceiling so an
-# ultra-wide/maximized window doesn't stretch a one-line message absurdly wide.
+# Wrap at ~65% of column width (scales with the window, not a fixed
+# margin), floor/ceiling-bounded so bubbles stay readable at either extreme.
 _BUBBLE_MAX_PCT = 0.65
 _BUBBLE_MIN_WRAP = 180
 _BUBBLE_MAX_WRAP = 480
 
-# Hard cap on rows kept in the chatbox. Without this, a spamming peer grows
-# the canvas item count unboundedly. Date dividers are excluded from this
-# cap — at most one is added per calendar day, and losing the day's only
-# date header to eviction isn't worth the (negligible) memory it saves.
+# Hard cap on rows kept (a spamming peer would otherwise grow this
+# unboundedly). Date dividers are excluded, at most one per calendar day.
 _MAX_ROWS = 150
 
 _TOP_MARGIN = 8
@@ -69,17 +45,8 @@ class ChatBox(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent", **kw)
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        # Reserve column 1's width (the scrollbar's natural width, 20px)
-        # permanently, even while the scrollbar is hidden (grid_remove()
-        # below). Without this, hiding it lets the canvas column reclaim
-        # that space and grow — then showing it again later shrinks the
-        # canvas back. Canvas items don't reposition themselves when the
-        # canvas widget resizes, so a layout pass computed against one
-        # width and then silently invalidated by a width change left
-        # bubbles rendered at stale (wrong) x-coordinates until the next
-        # unrelated relayout happened to fix it — reproduced as "message
-        # bubbles show as thin slivers at the right edge; re-selecting the
-        # peer a second time fixes it."
+        # Reserve scrollbar width even while hidden (grid_remove() below) —
+        # otherwise toggling it resizes the canvas and leaves stale bubbles.
         self.grid_columnconfigure(1, minsize=20)
 
         self._canvas = tk.Canvas(self, bg=T.BG_MAIN, highlightthickness=0)
@@ -90,49 +57,36 @@ class ChatBox(ctk.CTkFrame):
         self._vbar.grid(row=0, column=1, sticky="ns")
         self._vbar.grid_remove()   # nothing to scroll yet — see _do_relayout
         self._canvas.configure(yscrollcommand=self._vbar.set)
-        # CTkScrollableFrame handled mouse-wheel scrolling internally; a raw
-        # Canvas needs it bound explicitly. Windows reports wheel delta in
-        # multiples of 120.
+        # A raw Canvas needs mouse-wheel bound explicitly (CTkScrollableFrame
+        # did this internally).
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
 
         self._last_date: str = ""
 
-        # (is_me, sender) of the last text bubble added, or None. Anything
-        # that isn't a plain text bubble (system notice, file card, date
-        # divider) resets this to None, so grouping only ever spans an
-        # unbroken run of the same sender's messages.
+        # (is_me, sender) of the last text bubble, reset to None by any
+        # non-bubble row — grouping only spans an unbroken same-sender run.
         self._last_msg_key: tuple[bool, str] | None = None
 
-        # Every rendered row, in order. Replaces the old _bubble_labels +
-        # _rows: relayout redraws from this list rather than reconfiguring
-        # existing widgets, so there's no incremental-diff logic to get
-        # wrong — simple, at the cost of redrawing everything on change
-        # (cheap here: canvas items have no per-widget construction cost).
+        # Every rendered row, in order; relayout redraws from this list
+        # instead of diffing widgets — simpler, and canvas items are cheap.
         self._items: list[_MsgItem] = []
         self._next_tag_id = 0
 
-        # Embedded file-card CTkFrames, keyed by tag. Reused across
-        # relayouts (only their canvas embedding is redone each time) so a
-        # relayout doesn't rebuild the CTkButton/CTkLabel tree for every
-        # file card on every new chat message — only genuinely-evicted or
-        # cleared cards get destroyed (_track_item, clear()).
+        # Embedded file-card CTkFrames, keyed by tag; reused across relayouts
+        # instead of rebuilt (only evicted/cleared cards get destroyed).
         self._file_frames: dict[str, ctk.CTkFrame] = {}
 
         self._current_wrap: int = 400
         self._canvas_width: int = 400
 
-        # Debounces relayout so a burst of appends (message-spam batching,
-        # up to 25 per Tk tick — see app.py's _drain_messages) triggers one
-        # redraw pass, not one per message.
+        # Debounces relayout so a burst of appends triggers one redraw pass.
         self._relayout_pending: bool = False
 
         # Debounces scroll-to-bottom the same way.
         self._scroll_pending: bool = False
 
-        # Debounces _on_resize: dragging a window edge fires <Configure>
-        # continuously (every pixel), and relayouting on each one is what
-        # caused visible tearing/flicker in the previous CTkFrame-based
-        # renderer. Only the size after the drag settles is applied.
+        # Debounces resize — <Configure> fires per-pixel during a drag, only
+        # the settled size should trigger a relayout.
         self._resize_after_id: str | None = None
 
         self._canvas.bind("<Configure>", self._on_resize)
@@ -274,11 +228,8 @@ class ChatBox(ctk.CTkFrame):
         return f"row{self._next_tag_id}"
 
     def _track_item(self, item: _MsgItem) -> None:
-        """Append *item* and evict the oldest evictable row past _MAX_ROWS.
-
-        Only one item is ever appended per call, so at most one can be
-        over the cap — an "if", not a "while", is enough here.
-        """
+        """Append *item*; evict the oldest evictable row if over _MAX_ROWS
+        (one append per call, so "if" suffices — never more than one over)."""
         self._items.append(item)
         evictable = sum(1 for i in self._items if i.kind != "divider")
         if evictable > _MAX_ROWS:
@@ -303,10 +254,7 @@ class ChatBox(ctk.CTkFrame):
     # ── Relayout (debounced) ──────────────────────────────────────────
 
     def _request_relayout(self) -> None:
-        """Coalesce a burst of appends/resizes within one Tk tick into one
-        relayout pass — a message-spam batch (up to 25 per tick, handled
-        upstream in app.py) would otherwise redraw the whole canvas 25x.
-        """
+        """Coalesce a burst of appends/resizes into one relayout per Tk tick."""
         if self._relayout_pending:
             return
         self._relayout_pending = True
@@ -334,11 +282,7 @@ class ChatBox(ctk.CTkFrame):
 
         content_h = y + _TOP_MARGIN
         self._canvas.configure(scrollregion=(0, 0, self._canvas_width, content_h))
-        # CTkScrollbar always draws a full-length pill, even when there's
-        # nothing to scroll (verified: it has no auto-hide of its own) —
-        # left visible, a short chat looks like it has hidden content above/
-        # below it, which is exactly what a user would (reasonably) find
-        # confusing. Hide it whenever all content already fits on screen.
+        # CTkScrollbar has no auto-hide; hide it manually when content fits.
         if content_h > self._canvas.winfo_height():
             self._vbar.grid()
         else:

@@ -91,10 +91,8 @@ class PeerDetails(ctk.CTkFrame):
         btn_card = ctk.CTkFrame(self, fg_color="transparent")
         btn_card.pack(fill="x", padx=12, pady=(0, 12))
 
-        # Icons chosen to match widely-recognized equivalents from
-        # Messenger/Zalo/Telegram (link/plug/plus/no-entry) instead of the
-        # previous Unicode Technical-block glyphs (⎋ ⊘ ⭐), which aren't in
-        # the emoji set and render as flat, hard-to-read symbols.
+        # Recognizable emoji (link/plug/plus) instead of the previous
+        # Unicode Technical-block glyphs, which rendered flat and unclear.
         self._connect_btn = self._btn(
             btn_card, "🔗  Connect",
             fg=T.ACCENT_DIM, hover=T.ACCENT_GLOW, tc=T.TEXT_LINK,

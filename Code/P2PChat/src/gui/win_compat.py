@@ -1,10 +1,6 @@
-"""Windows-only Tk/CTk compositing tweaks — cosmetic, never required for correctness.
-
-Kept separate from theme.py (colors/fonts only) so both ChatApp and
-TrustDialog can import this without a circular import: app.py already
-pulls in trust_dialog.py indirectly (via main_window.py), so trust_dialog.py
-can't import anything from app.py back.
-"""
+"""Windows-only Tk/CTk compositing tweaks — cosmetic, never required for
+correctness. Kept separate from theme.py to avoid a circular import between
+ChatApp and TrustDialog."""
 from __future__ import annotations
 
 import logging
@@ -18,19 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 def enable_layered_window(win) -> None:
-    """Opt *win* into DWM layered-window compositing (Windows only).
-
-    Tk on Windows paints via immediate-mode GDI with no whole-window double
-    buffer, so a fast resize drag can outrun the repaint and briefly show
-    unpainted (black) canvas — worse for CustomTkinter windows specifically,
-    since CTk redraws every widget independently on <Configure> (confirmed
-    by reading customtkinter's own source; not fixable from the caller's
-    side). Marking the window WS_EX_LAYERED hands compositing to DWM, which
-    renders off-screen and blits atomically, closing that gap.
-
-    No-op if pywinstyles isn't installed — this is a cosmetic mitigation,
-    never required for the app to function.
-    """
+    """Opt *win* into DWM layered-window compositing (Windows only) to stop a
+    fast resize from briefly showing unpainted black canvas. No-op if
+    pywinstyles isn't installed."""
     if pywinstyles is None:
         return
 

@@ -9,22 +9,9 @@ from gui.win_compat import enable_layered_window
 
 
 class TrustDialog(ctk.CTkToplevel):
-    """Modal dialog for TOFU trust decisions.
-
-    Modes
-    -----
-    new_peer
-        Shown on first contact.  Offers Trust, Block, Skip.
-    warning
-        Shown when a known peer's fingerprint changed (possible MITM).
-        Offers Update & Trust, Block.
-
-    Callback results: "trust" | "block" | "skip" | "update"
-
-    Design note: grab_set() is called *after* all widgets are built.
-    Calling it earlier (in _setup_window) causes the window to capture
-    events before it is visible, making buttons unresponsive.
-    """
+    """Modal TOFU dialog: "new_peer" offers Trust/Block/Skip, "warning"
+    (fingerprint changed) offers Update & Trust/Block. grab_set() must run
+    after widgets are built, or the window freezes before it's visible."""
 
     def __init__(
         self,
@@ -59,11 +46,8 @@ class TrustDialog(ctk.CTkToplevel):
     def _configure_window(self) -> None:
         """Set window geometry and keep it centred above the parent."""
         self.title("Peer Trust Verification")
-        # Deferred slightly: calling resizable() in the same tick as window
-        # creation is a known source of an initial white/black flash on
-        # Windows (the OS repaints once for the create, once for the
-        # resizable-flag change) — letting the window finish its first
-        # paint first avoids the double-repaint.
+        # Deferred: resizable() in the same tick as window creation causes
+        # a Windows double-repaint flash (create, then flag change).
         self.after(10, lambda: self.resizable(False, False))
         enable_layered_window(self)
         self.configure(fg_color=T.BG_MAIN)

@@ -1,24 +1,6 @@
-"""Chat bubble drawing — direct Canvas rendering (rounded-rect + text items).
-
-Design decisions:
-    - Bubbles are raw Tk Canvas items (polygon + text), not CTk widgets.
-      Every CTkFrame/CTkLabel independently redraws itself on <Configure>
-      (confirmed by reading customtkinter's own source) — with one CTkFrame
-      subtree per chat message, a resize drag or message flood triggered a
-      redraw cascade across hundreds of live widgets, causing the black
-      flicker/tearing this file replaces. Canvas items have no window
-      handle and no <Configure> binding of their own, so that cascade
-      cannot happen.
-    - Each draw function returns the total height consumed (including its
-      own top gap) so the caller (ChatBox._do_relayout) can advance its
-      y-cursor. Height comes from canvas.bbox() on the actual rendered text
-      item — never hand-rolled font-metrics math.
-    - grouped (consecutive messages from the same sender) tightens the
-      gap above the bubble and, for received messages, hides the repeated
-      sender name — the standard grouping convention in Telegram/Discord/
-      Messenger, so a burst of messages from one person doesn't visually
-      repeat their name and doesn't get separated as if from someone new.
-"""
+"""Chat bubble drawing — raw Canvas items (polygon + text), not CTk widgets,
+since one CTkFrame per message redrew on every <Configure> and caused a
+flicker cascade under resize/flood. Each draw fn returns its total height."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -40,11 +22,7 @@ def _now() -> str:
 
 
 def _round_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
-    """Draw a rounded rectangle as a smoothed polygon. Returns the item id.
-
-    Standard Tkinter recipe: a fixed 12-point corner list fed to
-    create_polygon(smooth=True) — no bezier math, no images needed.
-    """
+    """Draw a rounded rectangle as a smoothed 12-point polygon; returns its item id."""
     r = radius
     points = [
         x1 + r, y1,       x2 - r, y1,      x2, y1,      x2, y1 + r,
@@ -57,20 +35,14 @@ def _round_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
 def draw_bubble(canvas, top_y: int, canvas_width: int, wraplength: int,
                  message: str, sender: str, is_me: bool, grouped: bool,
                  tag: str) -> int:
-    """Draw one message bubble at top_y; returns total height including its top gap.
-
-    is_me: right-aligned indigo bubble vs left-aligned card.
-    grouped: follows another message from the same sender (see module docstring).
-    tag: this row's canvas tag — eviction deletes everything under it.
-    """
+    """Draw one bubble at top_y; returns its total height including top gap.
+    is_me: right-aligned indigo vs left-aligned card. tag: this row's canvas tag."""
     ts = _now()
     top_gap = _GAP_GROUPED if grouped else _GAP_NEW_GROUP
     y = top_y + top_gap
 
-    # Text items are created at the origin first so their real (wrapped)
-    # size can be measured via bbox — then repositioned once the bubble's
-    # final bounding box is known. Tk's own layout is the source of truth
-    # for wrap/height, not hand-rolled font metrics.
+    # Drawn at the origin first so real wrapped size can be measured via
+    # bbox, then repositioned — Tk's layout, not hand-rolled font metrics.
     name_id = None
     name_w = 0
     if not is_me and not grouped:

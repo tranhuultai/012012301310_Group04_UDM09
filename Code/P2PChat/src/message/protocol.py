@@ -25,22 +25,12 @@ class PacketType:
     SYSTEM        = "system"
     ERROR         = "error"
 
-    # Sent periodically on every active session, independent of chat
-    # activity — see network/node.py's heartbeat thread. Its only purpose
-    # is to keep data flowing so the receive loop's inactivity timeout
-    # never misfires on a peer that's simply idle (not dead). No reply is
-    # expected; receiving it is itself what resets the timeout.
+    # Heartbeat (see node.py) — keeps the receive-loop timeout from firing
+    # on an idle-but-alive peer. No reply expected.
     PING          = "ping"
 
-    # ── File transfer ──────────────────────────────────────────────────
-    # Workflow (Telegram-style):
-    #   Sender   → FILE_META        (metadata only; no data yet)
-    #   Receiver → DOWNLOAD_REQUEST (user clicked Download)
-    #   Sender   → FILE_START       (begin transfer)
-    #   Sender   → FILE_CHUNK × N   (encrypted + Base64 chunks)
-    #   Sender   → FILE_COMPLETE    (SHA-256 for integrity check)
-    #   Either   → FILE_CANCEL      (abort at any time)
-    #   Either   → FILE_ERROR       (unrecoverable error)
+    # File transfer (Telegram-style): META -> DOWNLOAD_REQUEST -> START ->
+    # CHUNK x N -> COMPLETE (sha256). CANCEL/ERROR abort at any point.
     FILE_META         = "file_meta"
     DOWNLOAD_REQUEST  = "download_request"
     FILE_START        = "file_start"
@@ -110,11 +100,8 @@ class ProtocolHandler:
         return struct.pack("!I", len(json_data)) + json_data
 
     def validate_packet(self, packet: dict[str, Any]) -> bool:
-        """Check packet has the required fields for its type, with correct types.
-
-        Every packet must pass this before processing. Malformed packets are
-        silently dropped — they must never crash the receive loop.
-        """
+        """Check packet has the required fields for its type, correctly typed.
+        Malformed packets are silently dropped, never crash the receive loop."""
         if not isinstance(packet, dict):
             logger.warning("validate_packet: not a dict")
             return False
@@ -193,10 +180,8 @@ class ProtocolHandler:
         return bytes(received_data)
 
     def receive_packet(self, peer_socket: Any) -> Optional[dict[str, Any]]:
-        """Read one framed packet, or None if closed / oversized / malformed.
-
-        Never raises — the receive loop must survive a bad peer.
-        """
+        """Read one framed packet, or None if closed/oversized/malformed —
+        never raises, so the receive loop survives a bad peer."""
         try:
             header = self.receive_exact(peer_socket, self.HEADER_SIZE)
             if not header:

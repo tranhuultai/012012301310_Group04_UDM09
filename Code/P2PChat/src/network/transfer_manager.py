@@ -1,28 +1,9 @@
-"""File transfer manager for P2PChat.
-
-Workflow (Telegram-style — no Accept/Reject dialog):
-
-    Sender:
-        1. User picks a file → send_file() called.
-        2. FILE_META sent → metadata appears in receiver's chat.
-        3. Sender waits for DOWNLOAD_REQUEST.
-
-    Receiver:
-        4. GUI shows "📄 filename  ⬇ Download" button in chat.
-        5. User clicks Download → DOWNLOAD_REQUEST sent.
-
-    Sender:
-        6. Receives DOWNLOAD_REQUEST → sends FILE_START, then N × FILE_CHUNK.
-        7. Sends FILE_COMPLETE with SHA-256.
-
-    Receiver:
-        8. Each FILE_CHUNK: Base64-decode → Fernet-decrypt → append to .part.
-        9. On FILE_COMPLETE: verify SHA-256. Rename .part → final file.
-
-Encoding strategy:
-    Raw bytes → Fernet.encrypt() → Base64.b64encode() → UTF-8 str in JSON.
-    Reason: JSON cannot carry raw bytes; Base64 is an encoding, NOT encryption.
-"""
+"""File transfer manager (Telegram-style): send_file() -> FILE_META ->
+DOWNLOAD_REQUEST -> FILE_START -> N x FILE_CHUNK -> FILE_COMPLETE (SHA-256).
+Each chunk: Fernet-encrypted, then Base64 (JSON can't carry raw bytes)."""
+# WHY changed: receiver never re-checked FILE_META's extension/size (only the
+# sender's UI path did, trivially bypassable), and self._transfers entries
+# were never evicted — every transfer ever run leaked for the process's life.
 from __future__ import annotations
 
 import base64
@@ -104,24 +85,9 @@ def _mime_for_ext(ext: str) -> str:
 
 
 class TransferManager:
-    """Coordinates all active file transfers for one P2PNode.
-
-    Responsibilities
-    ----------------
-    * Validate files before sending (size, extension).
-    * Build and dispatch FILE_META / FILE_START / FILE_CHUNK / FILE_COMPLETE.
-    * Receive and dispatch DOWNLOAD_REQUEST / FILE_CHUNK / FILE_COMPLETE.
-    * Write received chunks to .part files; rename on integrity check.
-    * Report progress to the GUI through lightweight callbacks.
-    * Never block the GUI thread or the network receive thread.
-
-    Thread model
-    ------------
-    Each outbound transfer runs in its own daemon thread (_SendThread).
-    The inbound chunk-write loop also runs in a daemon thread (_RecvThread).
-    Both threads communicate with the GUI exclusively through the after()
-    mechanism supplied by the ChatApp (via schedule_gui).
-    """
+    """Coordinates all active file transfers for one P2PNode: validates,
+    builds/dispatches the FILE_* packet sequence, writes chunks to .part
+    files, and reports progress via callbacks scheduled through schedule_gui."""
 
     def __init__(
         self,
@@ -133,13 +99,8 @@ class TransferManager:
         on_transfer_complete: Optional[Callable] = None,
         on_file_meta:         Optional[Callable] = None,
     ) -> None:
-        """Wire the node's on_file_packet hook. Callback signatures:
-
-        on_transfer_started(tid, filename, peer_name, direction)
-        on_transfer_progress(tid, fraction)           fraction in [0, 1]
-        on_transfer_complete(tid, success, message)   success=False for errors
-        on_file_meta(meta: TransferMeta, peer_name)   receiver got FILE_META, show Download
-        """
+        """Wire the node's on_file_packet hook (see each callback parameter's
+        name for its argument signature)."""
         self._node         = node
         self._ctrl         = controller
         self._schedule_gui = schedule_gui
@@ -164,11 +125,8 @@ class TransferManager:
     # ------------------------------------------------------------------ #
 
     def send_file(self, filepath: str, peer_id: str) -> tuple[bool, str]:
-        """Validate filepath and send FILE_META to peer_id.
-
-        Returns (True, transfer_id) on success, (False, error_message) if
-        validation failed or the peer isn't connected.
-        """
+        """Validate filepath and send FILE_META; returns (True, transfer_id)
+        or (False, error_message)."""
         path = Path(filepath)
         ext  = path.suffix.lower()
 
@@ -232,6 +190,7 @@ class TransferManager:
         pkt = {"type": PacketType.FILE_CANCEL, "transfer_id": transfer_id}
         self._node.send_raw_packet(pkt, tcp_addr)
         self._mark(transfer_id, _ST_CANCELLED)
+        self._evict(transfer_id)
         logger.info("[TRANSFER] Cancelled tid=%s", transfer_id[:8])
 
     def request_download(self, transfer_id: str) -> bool:
@@ -253,10 +212,8 @@ class TransferManager:
 
     def _on_file_packet(self, packet: dict, crypto: Optional[CryptoHandler],
                         sender_pid: str) -> None:
-        """Dispatch an inbound file-transfer packet to its handler.
-
-        Called by P2PNode on the receive thread — must return quickly.
-        """
+        """Dispatch an inbound file-transfer packet; called by P2PNode on
+        the receive thread, so must return quickly."""
         ptype = packet.get("type")
         try:
             if   ptype == PacketType.FILE_META:
@@ -287,6 +244,19 @@ class TransferManager:
             meta = TransferMeta.from_dict(raw)
         except (KeyError, ValueError) as exc:
             logger.warning("[TRANSFER] Bad FILE_META: %s", exc)
+            return
+
+        # send_file() enforces extension/size, but that's the sender's own
+        # UI path — a peer can send a hand-built FILE_META dict directly and
+        # skip it entirely, so the receiver must check again.
+        ext = Path(meta.filename).suffix.lower()
+        if ext not in FILE_ALLOWED_EXT:
+            logger.warning("[TRANSFER] Rejected FILE_META with disallowed extension: %s",
+                            meta.filename)
+            return
+        if not 0 < meta.filesize <= FILE_MAX_SIZE:
+            logger.warning("[TRANSFER] Rejected FILE_META with invalid size: %d bytes",
+                            meta.filesize)
             return
 
         tid      = meta.transfer_id
@@ -399,6 +369,17 @@ class TransferManager:
         if fh is None:
             logger.warning("[TRANSFER] No file handle for tid=%s", tid[:8])
             return
+
+        # _recv_meta validates the *declared* filesize, but a sender can just
+        # keep sending chunks past it — cap actual bytes written at that
+        # declared size so a transfer can never exceed one file's worth.
+        if entry["received"] + len(raw_bytes) > entry["meta"].filesize:
+            logger.error("[TRANSFER] tid=%s sent more data than declared filesize — aborting",
+                         tid[:8])
+            self._send_error(tid, entry["tcp_addr"], "Transfer exceeded declared file size")
+            self._cleanup_recv(tid)
+            return
+
         try:
             fh.write(raw_bytes)
             fh.flush()
@@ -490,10 +471,7 @@ class TransferManager:
     # ------------------------------------------------------------------ #
 
     def _send_file_thread(self, tid: str) -> None:
-        """Worker thread: send FILE_START + N × FILE_CHUNK + FILE_COMPLETE.
-
-        Runs entirely outside the GUI and receive threads.
-        """
+        """Worker thread: send FILE_START + N x FILE_CHUNK + FILE_COMPLETE."""
         with self._lock:
             entry = self._transfers.get(tid)
         if entry is None:
@@ -590,14 +568,14 @@ class TransferManager:
     # ------------------------------------------------------------------ #
 
     def cleanup_peer(self, tcp_addr: str) -> None:
-        """Close any open file handles for transfers involving *tcp_addr*.
-
-        Called when a peer disconnects abruptly (no FILE_CANCEL received).
-        """
+        """Fail any in-progress transfers with *tcp_addr* (peer disconnected
+        abruptly, no FILE_CANCEL received). Covers _ST_PENDING too, not just
+        _ST_RECEIVING — an un-actioned offer used to never get cleaned up."""
         with self._lock:
             tids = [
                 tid for tid, e in self._transfers.items()
-                if e.get("tcp_addr") == tcp_addr and e.get("state") == _ST_RECEIVING
+                if e.get("tcp_addr") == tcp_addr
+                and e.get("state") in (_ST_PENDING, _ST_SENDING, _ST_RECEIVING)
             ]
         for tid in tids:
             self._cleanup_recv(tid)
@@ -615,8 +593,13 @@ class TransferManager:
             if tid in self._transfers:
                 self._transfers[tid]["state"] = state
 
+    def _evict(self, tid: str) -> None:
+        """Drop tid once it reaches a terminal state — nothing reads it again."""
+        with self._lock:
+            self._transfers.pop(tid, None)
+
     def _finish(self, tid: str, success: bool, message: str) -> None:
-        """Mark transfer done and notify GUI."""
+        """Mark transfer done, notify GUI, then evict its bookkeeping entry."""
         self._mark(tid, _ST_DONE if success else _ST_ERROR)
         tid_copy = tid
 
@@ -624,6 +607,7 @@ class TransferManager:
             if self.on_transfer_complete:
                 self.on_transfer_complete(tid_copy, success, message)
         self._schedule_gui(_gui)
+        self._evict(tid)
 
     def _cleanup_recv(self, tid: Optional[str]) -> None:
         """Close the .part file handle for a failed/cancelled receive (file is kept)."""

@@ -59,15 +59,9 @@ class PeerCard(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        """Create the card's widget tree once. Never called again after
-        __init__ — updates go through _refresh()/configure() instead, so
-        the card doesn't flicker (destroy+recreate) on every peer-status
-        change (discovery heartbeats fire this every ~5s per peer).
-        """
-        # Slim accent bar on the left edge — placed only while selected (see
-        # set_selected), a fixed T.ACCENT color. Gives the selected state a
-        # clearer signal than the background tint alone, matching the
-        # left-accent pattern used for the active item in Slack/Discord.
+        """Build the card's widget tree once; later updates go through
+        _refresh()/configure() instead, to avoid a destroy+recreate flicker."""
+        # Left accent bar, placed only while selected (see set_selected).
         self._accent = ctk.CTkFrame(self, width=3, fg_color=T.ACCENT,
                                     corner_radius=0)
         # Not placed here — place()/place_forget() in set_selected toggles
@@ -83,10 +77,8 @@ class PeerCard(ctk.CTkFrame):
         av_wrap.pack(side="left", padx=(0, 10), pady=7)
         av_wrap.pack_propagate(False)
 
-        # Avatar color/initial only depend on username, which is fixed for
-        # this card's lifetime (a username change means a different peer_id,
-        # i.e. a different card) — set once here rather than recomputing
-        # and reconfiguring on every _refresh() (every ~5s heartbeat).
+        # Avatar color/initial fixed for this card's lifetime (username
+        # change means a different peer_id/card) — set once, not per refresh.
         username = self.peer_info.get("username") or "Unknown"
         self._av = ctk.CTkFrame(av_wrap, width=44, height=44, corner_radius=22,
                                 fg_color=T.avatar_color(username))
@@ -96,12 +88,8 @@ class PeerCard(ctk.CTkFrame):
                      font=("Segoe UI", 15, "bold"), text_color="#fff")
         self._av_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Status dot — placed at bottom-right of av_wrap, overlapping the
-        # avatar's circular edge. It's created after (and lifted above) the
-        # avatar so its full border ring stacks on top and isn't partially
-        # covered by the avatar underneath — without the explicit .lift(),
-        # the upper-left of the ring (the part overlapping the avatar's
-        # disc) rendered as if clipped by the avatar.
+        # Status dot overlaps the avatar's edge; needs .lift() or its ring
+        # renders clipped underneath the avatar instead of stacked on top.
         self._dot = ctk.CTkFrame(av_wrap, width=14, height=14, corner_radius=7,
                            border_width=2, border_color=T.BG_CARD)
         self._dot.place(relx=1.0, rely=1.0, x=-1, y=-1, anchor="se")
@@ -142,24 +130,15 @@ class PeerCard(ctk.CTkFrame):
                      font=("Segoe UI", 9, "bold"))
         self._badge_lbl.pack(padx=9, pady=3)
 
-        # Bind click on every static child so the whole card is clickable,
-        # not just whichever small gap isn't covered by a label/frame — Tk
-        # delivers <Button-1> to the topmost leaf widget under the cursor,
-        # it does not bubble up to the parent on its own. Runs once here
-        # (build-time only); the action slot (pill/live/connect, built later
-        # by _refresh_action) binds itself separately when created.
+        # Bind every child so the whole card is clickable — Tk delivers
+        # clicks to the topmost leaf widget, not the parent, by default.
         for w in self.winfo_children():
             self._bind_click(w)
         self.bind("<Button-1>", self._do_select)
 
     def _refresh(self) -> None:
-        """Update all dynamic widgets in place from self.peer_info.
-
-        No widget is destroyed/recreated here except the action slot when
-        its *kind* actually changes (pill/live/connect) — everything else
-        is a plain .configure() call, which is what keeps peer-status
-        updates (discovery heartbeats) from flickering the whole card.
-        """
+        """Update all dynamic widgets in place via .configure() — no
+        destroy/recreate, so heartbeat updates don't flicker the card."""
         info      = self.peer_info
         username  = info.get("username") or "Unknown"
         status    = info.get("status", "offline")
@@ -205,10 +184,8 @@ class PeerCard(ctk.CTkFrame):
                                    text_color=trust_fg)
 
     def _refresh_action(self, unread: int, connected: bool) -> None:
-        """Rebuild only the action slot (top-right of the name row), and
-        only when its *kind* changes — unread count going 1→2 just updates
-        the pill's label text, it doesn't recreate the pill.
-        """
+        """Rebuild the action slot only when its kind changes (pill/live/
+        connect); a pill's count changing just updates its label text."""
         kind = "pill" if unread > 0 else ("live" if connected else "connect")
 
         if kind != self._action_kind:
@@ -409,15 +386,8 @@ class Sidebar(ctk.CTkFrame):
     def update_peers(self, peers: dict) -> None:
         """Incremental peer list update — avoids full rebuild on heartbeat."""
         prev = set(self._all_peers)
-        # Copy, don't alias: *peers* is app.py's ui_state.discovered_peers,
-        # which gets mutated in place (new peers added) the instant they're
-        # discovered — before the throttled redraw that calls this even
-        # fires. Aliasing it here meant next call's `prev` snapshot was
-        # already the *new* state too, so prev == curr looked true and a
-        # newly-discovered peer's card was silently never created (only the
-        # header count, computed fresh from dict size, showed the real
-        # total). Values are shared on purpose — only the key set needs its
-        # own identity for this comparison to mean anything.
+        # Copy, don't alias — peers mutates in place before this redraw
+        # fires, so aliasing made `prev` silently equal the new state too.
         self._all_peers = dict(peers)
         curr = set(peers)
 

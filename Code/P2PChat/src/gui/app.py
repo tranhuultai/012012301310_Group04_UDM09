@@ -49,32 +49,18 @@ class ChatApp(ctk.CTk):
         self._closing = False          # guard against double-close
         self._toast_after: str | None = None   # pending after() id for toast
 
-        # Peer IDs with an active TCP session. StatusBar has a single
-        # "connected peer" segment — without tracking the full set, a second
-        # peer connecting silently overwrote the first's name, and *any*
-        # disconnect (even of an already-superseded peer) unconditionally
-        # blanked the segment to "Not connected" even while others stayed
-        # connected. See _update_connection_segment.
+        # Peer IDs with an active session (StatusBar shows one "connected"
+        # segment; see _update_connection_segment).
         self._connected_peer_ids: set[str] = set()
 
-        # Inbound-message batching. A spamming peer can fire on_message
-        # dozens of times per second; queuing one after(0, ...) per message
-        # let the Tk event queue balloon and froze the GUI. Instead, messages
-        # are queued here and drained in capped batches (see _drain_messages).
-        # A maxlen deque auto-evicts the oldest message once the backlog hits
-        # cap — same bounded-FIFO convention node.py uses for its seen-message
-        # cache — and append()/popleft() are individually thread-safe in
-        # CPython, so no lock or swap-the-whole-list dance is needed even
-        # though multiple peer-connection threads call _on_message concurrently.
+        # Inbound messages: queued here and drained in capped batches (see
+        # _drain_messages) — one after() per message let a spamming peer
+        # balloon the Tk event queue and freeze the GUI.
         self._msg_queue: deque[tuple[str, str, str]] = deque(maxlen=self._MAX_QUEUED_MSGS)
         self._msg_drain_pending = False
 
-        # Per-conversation message log, keyed by peer_id.
-        # Each entry is one of:
-        #   ("in",      sender,  text)         — received chat message
-        #   ("out",     "Me",   text)          — sent chat message
-        #   ("file_in", sender,  text, tid)    — received file offer
-        # "text" for file_in is "📄 filename\nsize_str" for restoration.
+        # Per-conversation log, keyed by peer_id: ("in"|"out"|"file_in",
+        # sender, text[, tid]).
         self._conversations: dict[str, list] = {}
         # Unread counts per peer_id (cleared when the peer is selected).
         self._unread: dict[str, int] = {}
@@ -132,17 +118,9 @@ class ChatApp(ctk.CTk):
 
         # ── Start node (in background thread so UI appears immediately) ─
         self._boot_ui()
-        # Deferred via after(0, ...) rather than starting the thread
-        # directly here: this constructor runs *before* main.py calls
-        # mainloop(), so a thread started here can — if binding the socket
-        # and starting discovery happens to finish first — call
-        # self.after() from a background thread before mainloop() has
-        # actually begun. Tk raises "main thread is not in main loop" for
-        # that (a real, timing-dependent crash reproduced in practice, not
-        # a hypothetical). Scheduling the thread's own start via after(0)
-        # guarantees it can't even begin until the event loop is confirmed
-        # running — after(0, ...) called from the main thread before
-        # mainloop() starts is safe and simply fires once it does.
+        # Deferred: this constructor runs before mainloop() starts, so
+        # starting the thread directly risked Tk's "main thread is not in
+        # main loop" crash if it called self.after() too early.
         self.after(0, self._launch_node_thread)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -218,15 +196,9 @@ class ChatApp(ctk.CTk):
     _MAX_QUEUED_MSGS = 500
 
     def _on_message(self, peer_id: str, sender: str, payload: str) -> None:
-        # Persist received message immediately (happens on the callback thread,
-        # before marshalling to Tk — avoids losing messages if the UI thread
-        # is busy). append_message does an atomic write, safe from any thread.
-        #
-        # Wrapped in try/except: without it, a disk error here (full disk,
-        # permissions) would raise and abort this whole method *before* the
-        # _msg_queue.append below ran — so the message would disappear from
-        # the GUI too, not just fail to persist, and the only trace would be
-        # a logged exception the user never sees.
+        # Persist on this thread, before marshalling to Tk (thread-safe
+        # atomic write). try/except: a disk error here must not also drop
+        # the message from the GUI queue below.
         try:
             self.controller.message_history.append_message(peer_id, {
                 "message_id": str(uuid.uuid4()),
@@ -240,23 +212,16 @@ class ChatApp(ctk.CTk):
             self.after(0, lambda: self._toast_show(
                 "⚠  A message arrived but could not be saved to disk", T.DANGER))
 
-        # Enqueue and let the batch drain handle rendering. `deque.append` is
-        # thread-safe on its own (network thread here, Tk thread in
-        # _drain_messages), and maxlen already enforces the backlog cap by
-        # silently dropping the oldest entry — disk history is unaffected,
-        # only how far behind the live GUI catches up is bounded.
+        # deque.append is thread-safe alone; maxlen bounds the backlog by
+        # dropping the oldest (disk history is unaffected either way).
         self._msg_queue.append((peer_id, sender, payload))
         if not self._msg_drain_pending:
             self._msg_drain_pending = True
             self.after(0, self._drain_messages)
 
     def _drain_messages(self) -> None:
-        """Render up to _MSG_BATCH_SIZE queued messages in one Tk callback.
-
-        Replaces the old one-after()-per-message approach, which let the Tk
-        event queue balloon (and the GUI freeze/tear) whenever several peers
-        spammed messages concurrently.
-        """
+        """Render up to _MSG_BATCH_SIZE queued messages in one Tk callback
+        (one after() per message let the event queue balloon under spam)."""
         self._msg_drain_pending = False
         # popleft() is thread-safe on its own — no need to swap the whole
         # queue out first, unlike a plain list.
@@ -409,12 +374,7 @@ class ChatApp(ctk.CTk):
         self.after(3000, lambda: self.main_window.on_transfer_complete(tid))
 
     def _on_file_meta(self, meta, peer_name: str) -> None:
-        """Show a Download button in the chat for an incoming file offer.
-
-        The message appears inside the conversation the user is viewing;
-        if the sender is a different peer, the sender's conversation gets
-        a notification when they switch to it.
-        """
+        """Show a Download button in the chat for an incoming file offer."""
         tid       = meta.transfer_id
         filename  = meta.filename
         filesize  = meta.filesize
@@ -486,10 +446,7 @@ class ChatApp(ctk.CTk):
             if status == "online":
                 self.main_window.status_bar.set_discovery(True)
 
-            # When a known peer's fingerprint has changed, show a security
-            # warning dialog exactly once per session.  The TOFU engine has
-            # already set trust_state=MISMATCH; the user must decide whether
-            # to accept the new key or block the peer.
+            # Fingerprint changed (TOFU set MISMATCH) — warn once per session.
             if (trust_state == TrustState.MISMATCH
                     and peer_id not in self._mismatch_shown
                     and status != "offline"):
@@ -582,11 +539,8 @@ class ChatApp(ctk.CTk):
             status      = peer_info.get("status", "offline"),
             trust_state = peer_info.get("trust_state", TrustState.NEW))
 
-        # Reload this peer's conversation into the chat area.
-        # Always load text messages from disk (authoritative source) — this
-        # fixes the race where _conversations[peer_id] was seeded by an
-        # incoming message before the user clicked the peer, causing the full
-        # disk history to be skipped.
+        # Always reload from disk (authoritative) — avoids skipping history
+        # when _conversations was already seeded by a pre-click message.
         self.main_window.clear_chat()
         uname = peer_info.get("username", peer_id[:8])
         disk_records = self.controller.message_history.load_history(peer_id)
@@ -776,11 +730,8 @@ class ChatApp(ctk.CTk):
             self.main_window.clear_message_text()
             self._schedule_peers_redraw()
         else:
-            # node.send_message() returns False for more than one reason
-            # (peer not active, or the message exceeded MAX_PACKET_SIZE —
-            # see network/node.py) and doesn't currently report which, so
-            # the toast stays deliberately non-specific rather than assert
-            # a cause we haven't actually confirmed.
+            # send_message() doesn't report why it failed, so this toast
+            # stays non-specific (not active, or message too long).
             self._toast_show(
                 "⚠  Message not sent — check connection, or message may be too long.",
                 T.DANGER,
@@ -791,12 +742,8 @@ class ChatApp(ctk.CTk):
     # ------------------------------------------------------------------ #
 
     def _update_connection_segment(self) -> None:
-        """Reflect the current set of connected peers in the status bar.
-
-        StatusBar only has one "connected peer" slot, so with 2+ peers
-        connected at once we can't show every name — fall back to a count.
-        Called after _connected_peer_ids changes (connect/disconnect).
-        """
+        """Reflect connected peers in the status bar's one "connected" slot
+        (falls back to a count when 2+ peers are connected)."""
         n = len(self._connected_peer_ids)
         if n == 0:
             self.main_window.status_bar.set_disconnected()

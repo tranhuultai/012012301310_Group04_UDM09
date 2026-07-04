@@ -9,15 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 class TOFUEngine:
-    """TOFU trust engine.
-
-    State machine (verify_peer)
-    ───────────────────────────
-    unknown peer          → store as TRUSTED, return NEW
-    stored + BLOCKED      → return BLOCKED  (no state change)
-    stored + fp match     → promote to VERIFIED, return VERIFIED
-    stored + fp mismatch  → return MISMATCH (no auto-update; user must accept)
-    """
+    """TOFU trust engine. verify_peer: unknown -> TRUSTED/NEW, BLOCKED stays
+    BLOCKED, fingerprint match -> VERIFIED, mismatch -> MISMATCH (no
+    auto-update; user must accept)."""
 
     def __init__(self, profile: str = "known_peers") -> None:
         """profile is forwarded to TrustStore (per-port value for multi-instance testing)."""

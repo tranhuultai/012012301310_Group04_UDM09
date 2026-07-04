@@ -28,12 +28,8 @@ def generate_fingerprint(public_key_pem: str | bytes) -> str:
 
 
 class IdentityManager:
-    """Local RSA identity: key pair, peer_id, and fingerprint, persisted to disk.
-
-    First run generates and saves a new key pair; later runs load the same
-    one back, so peer_id stays stable across restarts. profile lets multiple
-    local instances (used in testing) keep separate identity files.
-    """
+    """Local RSA identity (key pair, peer_id, fingerprint), persisted to disk
+    so peer_id stays stable across restarts. profile separates test instances."""
 
     def __init__(self, profile: str = "identity") -> None:
         self.identity_dir  = Path("data/identity")
@@ -110,10 +106,8 @@ class IdentityManager:
     # ------------------------------------------------------------------ #
 
     def _load_from_disk(self) -> None:
-        """Read and deserialise the key PEMs; raises ValueError on any corruption.
-
-        load_identity() catches this and regenerates rather than crashing startup.
-        """
+        """Read and deserialise the key PEMs; raises ValueError on corruption
+        (load_identity() catches it and regenerates instead of crashing)."""
         try:
             with open(self.identity_file, "r", encoding="utf-8") as f:
                 data = json.load(f)

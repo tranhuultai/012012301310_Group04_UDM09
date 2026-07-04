@@ -1,11 +1,5 @@
-"""Design tokens — single source of truth for all GUI colours, fonts, and sizes.
-
-Implements the Lumina P2P design system (light variant):
-- surface: #fcf8ff base with indigo-primary (#4648d4)
-- Teal secondary for security / verified indicators
-- Soft rounding: 8px standard, 12px cards, circular avatars
-- Typography: Inter rhythm via Segoe UI
-"""
+"""Design tokens — single source of truth for all GUI colours, fonts, and sizes
+(Lumina P2P design system, light variant)."""
 from __future__ import annotations
 
 # ── Background layers (light hierarchy) ───────────────────────────────────
@@ -35,9 +29,8 @@ TEXT_SEC    = "#464554"   # on-surface-variant — secondary text
 TEXT_MUTED  = "#767586"   # outline — muted / placeholder
 TEXT_TIME   = "#767586"   # timestamps (same as muted)
 TEXT_LINK   = "#4648d4"   # primary — links / accent labels
-TEXT_ON_ACCENT = "#a5b4fc"   # muted captions/timestamps on dark indigo surfaces
-                              # (sent bubbles, sent-file cards) — needs more
-                              # contrast against BG_BUBBLE_ME than TEXT_MUTED gives
+TEXT_ON_ACCENT = "#a5b4fc"   # muted captions on dark indigo (sent) surfaces —
+                              # more contrast than TEXT_MUTED against BG_BUBBLE_ME
 
 # ── Accents — Lumina primary palette ──────────────────────────────────────
 ACCENT      = "#4648d4"   # primary

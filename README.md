@@ -210,7 +210,24 @@ src/
 ```bash
 cd Code/P2PChat/src
 python -m pytest test/ --ignore=test/test_statusbar.py -q
-# 200 passed
+# 214 passed
 ```
 
 `test_statusbar.py` bị `--ignore` vì nó tạo một cửa sổ Tk thật (`ctk.CTk()`) để test — máy không có display (SSH/CI không có Xvfb) sẽ crash ngay ở bước tạo cửa sổ. Chạy riêng file đó (`pytest test/test_statusbar.py`) vẫn được nếu máy có display.
+
+## UI thread-safety guarantee
+
+`P2PNode` chạy handshake/discovery/nhận tin nhắn trên các background thread riêng (accept loop, mỗi peer 1 receive thread, discovery listener, cleanup timer), nhưng **không có nơi nào trong số đó được phép đụng trực tiếp vào widget Tk** — CustomTkinter/Tkinter chỉ an toàn khi thao tác từ main thread.
+
+Ranh giới an toàn nằm ở `gui/app.py` và `ChatController(schedule_gui=...)`:
+
+- `ChatApp.__init__` truyền `schedule_gui = lambda fn: self.after(0, fn)` xuống `ChatController` → `TransferManager`, nên mọi callback file-transfer (`on_transfer_started/progress/complete`, `on_file_meta`) đã chạy trên main thread **trước khi** tới `gui/app.py`.
+- Các callback còn lại (`on_connected`, `on_disconnect`, `on_peer_discovered`) tự bọc phần đụng tới `ui_state`/widget trong một closure và gọi `self.after(0, closure)` ngay tại `gui/app.py` — xem `_on_connected`, `_on_disconnect`, `_on_peer_discovered`.
+- `on_message` không có phần GUI đồng bộ: nó chỉ enqueue vào một `deque` thread-safe rồi lên lịch `self.after(0, self._drain_messages)` — việc dựng bubble tin nhắn thật sự luôn chạy trong `_drain_messages` trên main thread.
+
+Quy tắc khi thêm callback mới từ `network/`: không bao giờ gọi thẳng vào `self.main_window`/`self.ui_state`/bất kỳ widget nào trong hàm được `P2PNode`/`TransferManager` gọi trực tiếp — luôn bọc trong `self.after(0, ...)` (hoặc để `TransferManager` làm việc đó qua `schedule_gui`) trước khi chạm GUI.
+
+## Giới hạn bảo mật đã biết (không phải bug — trade-off có chủ đích)
+
+- **Không có forward secrecy:** session key (Fernet) được sinh mới mỗi lần kết nối, nhưng truyền đi bằng cách mã hoá RSA với public key *dài hạn* của peer nhận (xem `_send_session_key` trong `node.py`). Nếu private key dài hạn của một bên từng bị lộ trong tương lai, kẻ tấn công lưu lại lưu lượng RSA-wrapped session-key trước đó *về lý thuyết* có thể giải mã lại các phiên chat cũ. Khắc phục đúng cách cần đổi sang trao đổi khoá ephemeral (ECDHE/X25519) — đây là thay đổi giao thức lớn (thêm bước handshake, đổi format gói tin, ảnh hưởng toàn bộ test khởi tạo session), không phải một bug-fix nhỏ, nên chưa thực hiện trong đợt rà soát này.
+- **TOFU không xác thực lần gặp đầu tiên:** giống mọi mô hình trust-on-first-use (kể cả SSH known_hosts), nếu chính kết nối *đầu tiên* với một peer bị MITM, TOFU không có cách nào phát hiện — nó chỉ phát hiện được từ lần gặp **thứ hai** trở đi khi fingerprint đổi khác (trạng thái `MISMATCH`). Đây là hạn chế cố hữu của TOFU, được chọn có chủ đích thay vì một hệ thống CA tập trung (không phù hợp với một ứng dụng P2P LAN đơn giản).

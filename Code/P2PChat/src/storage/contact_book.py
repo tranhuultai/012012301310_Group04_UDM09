@@ -6,19 +6,8 @@ from storage.storage_manager import StorageManager
 
 
 class ContactBook:
-    """Persistent contacts keyed by peer_id.
-
-    File layout (data/storage/contacts.json)::
-
-        {
-            "<peer_id>": {
-                "peer_id":     "...",
-                "alias":       "...",
-                "trust_state": "VERIFIED",
-                "fingerprint": "..."
-            }
-        }
-    """
+    """Persistent contacts keyed by peer_id, stored in
+    data/storage/contacts.json as {peer_id: {alias, trust_state, fingerprint}}."""
 
     def __init__(self) -> None:
         """Initialise and load contacts from disk."""

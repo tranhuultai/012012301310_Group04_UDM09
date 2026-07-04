@@ -202,11 +202,8 @@ def test_stop_without_start():
 
 
 def test_listen_loop_ignores_non_dict_json():
-    """A UDP payload that's valid JSON but not an object (e.g. "null",
-    a bare number, or a list) used to reach _handle_packet, which calls
-    packet.get(...) — raising an uncaught AttributeError that propagated
-    out of this loop and killed discovery for the rest of the process.
-    The loop must now skip it and keep running."""
+    """A non-dict JSON payload (e.g. "null") used to crash this loop via
+    packet.get() — it must now be skipped instead."""
 
     discovery = create_discovery()
     discovery.running = True

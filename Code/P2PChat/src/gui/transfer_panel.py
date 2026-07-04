@@ -13,11 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class TransferPanel(ctk.CTkFrame):
-    """Compact panel listing active file transfers with progress bars.
-
-    Hidden when no transfer is active — expands automatically when one starts
-    and collapses again 3 s after the last transfer completes.
-    """
+    """Compact panel of active file transfers; hidden when none are active,
+    collapses 3s after the last one completes."""
 
     def __init__(self, master, controller=None, **kwargs) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -154,11 +151,8 @@ class TransferPanel(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _pick_and_send(self) -> None:
-        """Open file picker, validate, and send.
-
-        Shows allowed types and 10 MB limit in the dialog title so the user
-        knows the constraints before choosing a file.
-        """
+        """Open file picker, validate, and send (dialog title shows the
+        allowed types and 10 MB limit)."""
         if self.controller is None:
             messagebox.showwarning("Not ready", "Node not started yet.")
             return

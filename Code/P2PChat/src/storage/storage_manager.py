@@ -8,11 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class StorageManager:
-    """Low-level storage primitives used by all persistence services.
-
-    All writes use an atomic temp-file rename pattern to prevent partial
-    writes from corrupting stored data (important for identity and trust).
-    """
+    """Low-level storage primitives: all writes use an atomic temp-file
+    rename so a crash mid-write can't corrupt stored data."""
 
     @staticmethod
     def ensure_dir(path: Path) -> None:

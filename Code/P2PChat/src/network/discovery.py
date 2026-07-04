@@ -21,22 +21,9 @@ DISCOVERY_RESPONSE = "discovery_response"
 
 
 class DiscoveryService:
-    """UDP broadcast peer discovery.
-
-    Optimisations vs naive implementation
-    --------------------------------------
-    * The JWT identity token is signed once and cached until it expires
-      (every PRESENCE_INTERVAL seconds we would otherwise do an RSA sign op
-      needlessly — JWT is valid for JWT_EXPIRE_HOURS).
-    * The broadcast socket is created once and reused for all broadcasts
-      (prevents the file-descriptor leak that occurred when a new socket was
-      created per call and an OSError in the finally block silently ate it).
-    * _send_response replies to (ip, DISCOVERY_PORT) — not to the
-      sender's ephemeral UDP port — so the listener on the other side actually
-      receives the response.
-
-    Lifecycle: start() → (periodic discover()) → stop()
-    """
+    """UDP broadcast peer discovery. JWT token is cached until expiry, the
+    broadcast socket is reused (no per-call FD churn), and responses go to
+    (ip, DISCOVERY_PORT) rather than the sender's ephemeral port."""
 
     # How long (seconds) the cached JWT is considered fresh.
     # Slightly less than JWT_EXPIRE_HOURS to ensure we never send an expired one.
@@ -175,14 +162,8 @@ class DiscoveryService:
             try:
                 data, address = sock.recvfrom(8192)
                 packet = json.loads(data.decode("utf-8"))
-                # json.loads succeeds on any valid JSON value, not just
-                # objects — a bare "null"/number/string/list from a
-                # malformed or hostile sender would otherwise reach
-                # _handle_packet's packet.get(...) and raise an uncaught
-                # AttributeError there, which (unlike the exceptions caught
-                # below) would propagate out of this loop and permanently
-                # kill discovery for this process. Mirrors the same check
-                # already done for the TCP path in protocol.py's receive_packet.
+                # json.loads accepts non-dict JSON too; packet.get() below
+                # would raise and kill this loop otherwise.
                 if not isinstance(packet, dict):
                     logger.debug(
                         "[DISCOVERY] Ignoring non-object UDP packet from %s", address[0])
@@ -233,12 +214,8 @@ class DiscoveryService:
                 logger.exception("[DISCOVERY] on_peer_found raised: %s", exc)
 
     def _send_response(self, peer_ip_or_addr) -> None:
-        """Reply to a broadcast at (peer_ip, DISCOVERY_PORT) — the peer's listener
-        port, not the ephemeral UDP source port the broadcast came from.
-
-        Accepts a bare IP or an (ip, port) tuple; the tuple form is the old
-        API, kept for test compatibility.
-        """
+        """Reply to (peer_ip, DISCOVERY_PORT), not the ephemeral source port.
+        Accepts a bare IP or an (ip, port) tuple (old API, kept for tests)."""
         sock = self._bcast_sock
         if sock is None:
             return
@@ -261,11 +238,7 @@ class DiscoveryService:
     # ------------------------------------------------------------------ #
 
     def _get_or_refresh_token(self) -> str:
-        """Return a cached JWT, re-signing only when it's gone stale.
-
-        RSA signing is expensive (~1 ms); doing it every 5s is wasteful when
-        the JWT is valid for 12 hours, so we refresh every 10 minutes instead.
-        """
+        """Return a cached JWT, re-signing (expensive) only once it's stale."""
         now = time.time()
         if not self._cached_token or now - self._token_created_at > self._TOKEN_REFRESH_SECS:
             self._cached_token    = JWTHandler.create_identity_token(
