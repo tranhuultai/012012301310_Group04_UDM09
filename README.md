@@ -22,7 +22,7 @@
 | 089205009200 | Trần Hữu Tài |
 | 052206013184 | Nguyễn Văn Tài |
 | 080306012851 | Trần Thị Thanh Thơ |
-| 052206003938 | Nguyễn Phan Hoài Bình |
+| 052206003938 | Nguyễn Phan Hoài Bin |
 | 082206002652 | Lê Quốc Thịnh |
 
 ---
