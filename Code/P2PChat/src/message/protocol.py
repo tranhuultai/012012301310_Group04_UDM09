@@ -204,9 +204,10 @@ class ProtocolHandler:
             return result
 
         except OSError as exc:
-            # WinError 10054 (connection reset) and 10053 (connection aborted)
+            # WinError 10054 (connection reset), 10053 (connection aborted), and
+            # 10038 (recv on a socket closed by stop_server() from another thread)
             # are expected during node shutdown — log at DEBUG, not ERROR.
-            if exc.winerror in (10054, 10053) if hasattr(exc, "winerror") else False:
+            if exc.winerror in (10054, 10053, 10038) if hasattr(exc, "winerror") else False:
                 logger.debug("Socket closed by remote: %s", exc)
             else:
                 logger.error("Socket receive failed: %s", exc)
